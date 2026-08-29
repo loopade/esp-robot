@@ -1,0 +1,18 @@
+[build]
+target = "xtensa-esp32-espidf"
+target-dir = "C:/ct"
+
+[target.xtensa-esp32-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32"
+ESP_IDF_VERSION = "v5.3.2"
+WIFI_SSID = "<set-locally>"
+WIFI_PASS = "<set-locally>"
+WIFI_FALLBACK_PASS = "<set-locally>"

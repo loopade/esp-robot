@@ -1,0 +1,20 @@
+# Rust build output
+target/
+**/target/
+
+# ESP-IDF and local machine configuration
+**/.cargo/config.toml
+**/sdkconfig
+**/sdkconfig.old
+
+# ROS 2 generated workspaces
+**/ros2_ws/build/
+**/ros2_ws/install/
+**/ros2_ws/log/
+
+# Local runtime/configuration files
+**/servo_driver.yaml
+**/servo_driver_esp32.yaml
+*.log
+**/__pycache__/
+*.pyc

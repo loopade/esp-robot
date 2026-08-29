@@ -1,0 +1,11 @@
+FROM ros:jazzy-desktop
+
+RUN apt-get update && apt-get install -y \
+    fonts-noto-cjk \
+    ros-jazzy-python-qt-binding \
+    ros-jazzy-robot-state-publisher \
+    ros-jazzy-rviz2 \
+    ros-jazzy-xacro \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/arm-stack

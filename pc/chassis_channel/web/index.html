@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>履带底盘控制台</title>
+  <style>
+    :root{color-scheme:dark;--bg:#071018;--panel:#101c27;--line:#294052;--text:#eaf3f8;--muted:#91a7b7;--cyan:#38d6c8;--red:#ff5964;--amber:#ffc15c}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,Segoe UI,"Microsoft YaHei",sans-serif;color:var(--text);background:radial-gradient(circle at 50% -15%,#1a3850,var(--bg) 50%)}
+    main{width:min(980px,calc(100% - 28px));margin:24px auto 40px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}h1{margin:0;font-size:clamp(23px,4vw,35px)}
+    .status{display:flex;gap:9px;align-items:center;color:var(--muted)}.dot{width:11px;height:11px;border-radius:50%;background:var(--red);box-shadow:0 0 13px var(--red)}.dot.online{background:var(--cyan);box-shadow:0 0 13px var(--cyan)}
+    .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.card{background:linear-gradient(150deg,#142330f5,#0b161ff5);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 18px 44px #0005}.card h2{margin:0 0 18px;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+    .speed{display:flex;align-items:center;gap:14px;margin-bottom:18px}.speed input{flex:1;accent-color:var(--cyan)}output{min-width:55px;color:var(--cyan);font:700 18px ui-monospace,monospace}
+    .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:430px;margin:auto}button{min-height:72px;border:1px solid #3a566d;border-radius:14px;background:#172b3b;color:var(--text);font-size:16px;font-weight:700;cursor:pointer;user-select:none;touch-action:none}button:hover{border-color:#6e94ae}button.active{background:#17655f;border-color:var(--cyan);box-shadow:0 0 24px #38d6c844}.forward{grid-column:2}.left{grid-column:1;grid-row:2}.stop{grid-column:2;grid-row:2;background:#72232b;border-color:#bb424d}.right{grid-column:3;grid-row:2}.reverse{grid-column:2;grid-row:3}
+    .tracks,.metrics{display:grid;grid-template-columns:1fr 1fr;gap:11px}.tracks{margin-top:18px}.box{padding:14px;border:1px solid #203747;background:#09151e;border-radius:13px}.box span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.box strong{font:700 22px ui-monospace,monospace}.metrics .box strong{font-size:16px}.hint{color:var(--muted);font-size:13px;line-height:1.6;margin:17px 0 0}.warn{color:var(--amber)}
+    @media(max-width:760px){.grid{grid-template-columns:1fr}main{margin-top:14px}}
+  </style>
+</head>
+<body><main>
+  <header><div><h1>履带底盘控制台</h1><p class="hint">ESP32 · BTS7960 · UDP 50 Hz</p></div><div class="status"><i id="dot" class="dot"></i><span id="status">等待遥测</span></div></header>
+  <div class="grid">
+    <section class="card"><h2>行驶控制</h2>
+      <div class="speed"><label>速度</label><input id="speed" type="range" min="50" max="850" step="10" value="300"><output id="speedText">30%</output></div>
+      <div class="pad">
+        <button class="forward" data-action="forward">▲<br>前进</button><button class="left" data-action="left">◀<br>左转</button><button id="stop" class="stop">急停</button><button class="right" data-action="right">▶<br>右转</button><button class="reverse" data-action="reverse">▼<br>后退</button>
+      </div>
+      <div class="tracks"><div class="box"><span>左履带指令</span><strong id="leftCmd">0</strong></div><div class="box"><span>右履带指令</span><strong id="rightCmd">0</strong></div></div>
+      <p class="hint"><span class="warn">按住</span>方向按钮、W/A/S/D 或使用手柄左摇杆控制；松开立即停车。空格键急停。手柄连接后先按任意按钮激活浏览器识别。</p>
+    </section>
+    <section class="card"><h2>实时遥测</h2><div class="metrics">
+      <div class="box"><span>控制源</span><strong id="source">--</strong></div><div class="box"><span>ESP32地址</span><strong id="peer">--</strong></div>
+      <div class="box"><span>左PWM</span><strong id="pwmLeft">0</strong></div><div class="box"><span>右PWM</span><strong id="pwmRight">0</strong></div>
+      <div class="box"><span>手柄</span><strong id="gamepad">未连接</strong></div><div class="box"><span>自动模式</span><strong id="autoMode">--</strong></div>
+      <div class="box"><span>按钮位图</span><strong id="buttons">0</strong></div><div class="box"><span>遥测序号</span><strong id="sequence">--</strong></div>
+    </div></section>
+  </div>
+</main><script>
+const $=id=>document.getElementById(id),vectors={forward:s=>[s,s],reverse:s=>[-s,-s],left:s=>[-s,s],right:s=>[s,-s]};let action=null,timer=null;
+const post=(url,data={})=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).catch(()=>{});
+function speedText(){$('speedText').textContent=Math.round(+$('speed').value/10)+'%'}$('speed').oninput=speedText;speedText();
+function send(){if(!action)return;const [left,right]=vectors[action](+$('speed').value);$('leftCmd').textContent=left;$('rightCmd').textContent=right;post('/api/control',{left,right,armed:true})}
+function end(){action=null;clearInterval(timer);timer=null;document.querySelectorAll('.active').forEach(x=>x.classList.remove('active'));$('leftCmd').textContent=0;$('rightCmd').textContent=0;post('/api/stop')}
+function begin(next,button){end();action=next;button?.classList.add('active');send();timer=setInterval(send,100)}
+document.querySelectorAll('[data-action]').forEach(b=>{b.onpointerdown=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);begin(b.dataset.action,b)};b.onpointerup=end;b.onpointercancel=end;b.onlostpointercapture=end});$('stop').onclick=end;
+const keys={KeyW:'forward',KeyS:'reverse',KeyA:'left',KeyD:'right'};onkeydown=e=>{if(e.code==='Space'){e.preventDefault();end()}else if(keys[e.code]&&!e.repeat)begin(keys[e.code])};onkeyup=e=>{if(keys[e.code])end()};onblur=end;onpagehide=()=>navigator.sendBeacon('/api/stop');
+let gamepadDriving=false,lastGamepadSend=0;
+const deadzone=value=>Math.abs(value)<.12?0:value;
+function pollGamepad(now){
+  const pad=[...(navigator.getGamepads?.()||[])].find(Boolean);
+  $('gamepad').textContent=pad?pad.id:'未连接';
+  let bits=0;if(pad)pad.buttons.slice(0,32).forEach((button,index)=>{if(button.pressed)bits|=(1<<index)});$('buttons').textContent=bits>>>0;
+  if(pad&&action===null){
+    const forward=-deadzone(pad.axes[1]||0),turn=deadzone(pad.axes[0]||0),speed=+$('speed').value;
+    const left=Math.round(Math.max(-1,Math.min(1,forward+turn))*speed),right=Math.round(Math.max(-1,Math.min(1,forward-turn))*speed);
+    if(left||right){
+      gamepadDriving=true;$('leftCmd').textContent=left;$('rightCmd').textContent=right;
+      if(now-lastGamepadSend>=80){post('/api/control',{left,right,armed:true});lastGamepadSend=now}
+    }else if(gamepadDriving){gamepadDriving=false;$('leftCmd').textContent=0;$('rightCmd').textContent=0;post('/api/stop')}
+  }else if(gamepadDriving){gamepadDriving=false;post('/api/stop')}
+  requestAnimationFrame(pollGamepad)
+}
+requestAnimationFrame(pollGamepad);
+async function refresh(){try{const s=await fetch('/api/state',{cache:'no-store'}).then(r=>r.json()),t=s.telemetry||{};$('dot').classList.toggle('online',s.online);$('status').textContent=s.online?'在线':'遥测离线';$('source').textContent=t.source??'--';$('peer').textContent=s.peer??'--';$('pwmLeft').textContent=t.pwm_left??0;$('pwmRight').textContent=t.pwm_right??0;$('autoMode').textContent=t.auto===undefined?'--':(t.auto?'开启':'关闭');$('sequence').textContent=t.seq??'--'}catch(_){$('dot').classList.remove('online');$('status').textContent='后端离线'}}setInterval(refresh,250);refresh();
+</script></body></html>

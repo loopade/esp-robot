@@ -1,0 +1,134 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="arm_platform">
+  <xacro:property name="pi_const" value="3.1415926535897931"/>
+  <xacro:property name="joint_limit" value="${pi_const / 2.0}"/>
+  <xacro:property name="mesh_scale" value="0.001 0.001 0.001"/>
+
+  <!-- Dimensions are derived from the STL bounding boxes, converted from millimetres. -->
+  <xacro:property name="base_turntable_x" value="0.0"/>
+  <xacro:property name="base_turntable_y" value="0.0"/>
+  <xacro:property name="base_kasa_z" value="0.01"/>
+  <xacro:property name="base_rotate_height" value="0.08"/>
+  <xacro:property name="base_govde_z" value="0.01"/>
+  <xacro:property name="base_to_shoulder_x" value="0.04"/>
+  <xacro:property name="base_to_shoulder_y" value="0.0"/>
+  <xacro:property name="base_to_shoulder_height" value="0.04"/>
+  <xacro:property name="upper_arm_length" value="0.1985"/>
+  <xacro:property name="upper_arm_elbow_z_offset" value="-0.038"/>
+  <xacro:property name="forearm_zero_pitch" value="1.3962634015954636"/>
+  <xacro:property name="forearm_near_hole_x" value="0.0"/>
+  <xacro:property name="forearm_far_hole_x" value="-0.135"/>
+  <xacro:property name="forearm_length" value="${forearm_near_hole_x - forearm_far_hole_x}"/>
+  <xacro:property name="wrist_mesh_x" value="0.0"/>
+  <xacro:property name="wrist_to_hand" value="0.043"/>
+  <xacro:property name="hand_mesh_x" value="0.0"/>
+  <xacro:property name="hand_to_tool" value="0.05"/>
+
+  <material name="printed_teal">
+    <color rgba="0.10 0.42 0.48 1.0"/>
+  </material>
+  <material name="printed_orange">
+    <color rgba="0.86 0.46 0.18 1.0"/>
+  </material>
+  <material name="printed_lime">
+    <color rgba="0.46 0.63 0.20 1.0"/>
+  </material>
+  <material name="hardware_dark">
+    <color rgba="0.12 0.12 0.13 1.0"/>
+  </material>
+  <material name="gear_yellow">
+    <color rgba="0.95 0.70 0.20 1.0"/>
+  </material>
+
+  <xacro:macro name="mesh_visual" params="filename xyz:='0 0 0' rpy:='0 0 0' material:='printed_orange'">
+    <visual>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <geometry>
+        <mesh filename="package://arm_description/meshes/${filename}" scale="${mesh_scale}"/>
+      </geometry>
+      <material name="${material}"/>
+    </visual>
+  </xacro:macro>
+
+  <link name="base_link">
+    <xacro:mesh_visual filename="Alt_Kasa.stl" xyz="${base_turntable_x} ${base_turntable_y} ${base_kasa_z}" material="printed_teal"/>
+  </link>
+
+  <link name="link_1">
+    <xacro:mesh_visual filename="Alt_Govde.stl" xyz="0 0 ${base_govde_z}" material="printed_lime"/>
+  </link>
+
+  <joint name="joint_1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link_1"/>
+    <origin xyz="${base_turntable_x} ${base_turntable_y} ${base_rotate_height}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
+  </joint>
+
+  <link name="link_2">
+    <xacro:mesh_visual filename="Alt_Kol.stl" xyz="0.1039 0 0" rpy="0 ${pi_const / 2.0} 0" material="printed_orange"/>
+  </link>
+
+  <joint name="joint_2" type="revolute">
+    <parent link="link_1"/>
+    <child link="link_2"/>
+    <origin xyz="${base_to_shoulder_x} ${base_to_shoulder_y} ${base_to_shoulder_height}" rpy="0 ${-pi_const / 2.0} 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
+  </joint>
+
+  <link name="link_3">
+    <xacro:mesh_visual filename="On_Kol.stl" xyz="${forearm_near_hole_x} 0 0" rpy="0 0 ${pi_const}" material="printed_orange"/>
+  </link>
+
+  <joint name="joint_3" type="revolute">
+    <parent link="link_2"/>
+    <child link="link_3"/>
+    <origin xyz="${upper_arm_length} 0 ${upper_arm_elbow_z_offset}" rpy="0 ${forearm_zero_pitch} 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
+  </joint>
+
+  <link name="link_4">
+    <xacro:mesh_visual filename="Bilek.stl" xyz="${wrist_mesh_x} 0 0" rpy="0 ${pi_const / 2.0} 0" material="printed_lime"/>
+  </link>
+
+  <joint name="joint_4" type="revolute">
+    <parent link="link_3"/>
+    <child link="link_4"/>
+    <origin xyz="${forearm_length} 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
+  </joint>
+
+  <link name="link_5">
+    <xacro:mesh_visual filename="El.stl" xyz="${hand_mesh_x} 0 0" rpy="0 ${pi_const / 2.0} 0" material="printed_teal"/>
+    <xacro:mesh_visual filename="El_Ust.stl" xyz="${hand_mesh_x} 0 0" rpy="0 ${pi_const / 2.0} 0" material="printed_lime"/>
+  </link>
+
+  <joint name="joint_5" type="revolute">
+    <parent link="link_4"/>
+    <child link="link_5"/>
+    <origin xyz="${wrist_to_hand} 0 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
+  </joint>
+
+  <link name="tool_link">
+    <xacro:mesh_visual filename="Parmak_Disli_X_2.stl" xyz="${hand_to_tool} 0.018 0" rpy="${pi_const} 0 0" material="gear_yellow"/>
+    <xacro:mesh_visual filename="Parmak_X_2.stl" xyz="${hand_to_tool + 0.022} 0.018 0" rpy="${pi_const} 0 0" material="printed_orange"/>
+    <xacro:mesh_visual filename="Parmak_2_X_2.stl" xyz="${hand_to_tool + 0.045} 0.018 -0.0025" rpy="${pi_const} 0 0" material="printed_lime"/>
+    <xacro:mesh_visual filename="Parmak_Disli_X_2.stl" xyz="${hand_to_tool} -0.018 0" material="gear_yellow"/>
+    <xacro:mesh_visual filename="Parmak_X_2.stl" xyz="${hand_to_tool + 0.022} -0.018 0" material="printed_orange"/>
+    <xacro:mesh_visual filename="Parmak_2_X_2.stl" xyz="${hand_to_tool + 0.045} -0.018 -0.0025" material="printed_lime"/>
+  </link>
+
+  <joint name="joint_6" type="revolute">
+    <parent link="link_5"/>
+    <child link="tool_link"/>
+    <origin xyz="${hand_to_tool} 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
+  </joint>
+</robot>

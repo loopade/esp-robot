@@ -1,0 +1,31 @@
+[package]
+name = "tracked-chassis"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+
+[package.metadata.esp-idf-sys]
+esp_idf_tools_install_dir = "custom:A:/.embuild/espressif"
+
+[[bin]]
+name = "tracked-chassis"
+harness = false
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[dependencies]
+anyhow = "1"
+embassy-executor = { version = "0.7", features = ["executor-thread", "arch-std"] }
+embassy-time = "0.4"
+embedded-svc = "0.28"
+esp-idf-hal = "0.45.2"
+esp-idf-svc = { version = "0.51", features = ["embassy-time-driver", "embassy-sync"] }
+log = "0.4"
+static_cell = "2"
+
+[build-dependencies]
+embuild = "0.33"
