@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 
 pub const JOINT_COUNT: usize = 6;
 
+pub const ARM_UDP_PORT: u16 = 8888;
+pub const CHASSIS_CONTROL_PORT: u16 = 4210;
+pub const CHASSIS_TELEMETRY_PORT: u16 = 4211;
+
+pub fn arm_udp_bind() -> String {
+    format!("0.0.0.0:{ARM_UDP_PORT}")
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ArmCommand {

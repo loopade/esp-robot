@@ -17,10 +17,7 @@ use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::units::FromValueType as _;
 use protocol::{ArmCommand, JointStatePacket};
 
-const UDP_BIND_ADDR: &str = match option_env!("ARM_UDP_BIND") {
-    Some(value) => value,
-    None => "0.0.0.0:8888",
-};
+const UDP_BIND_ADDR: &str = "0.0.0.0:8888";
 const CONTROL_LOOP_PERIOD: Duration = Duration::from_millis(33);
 const TELEMETRY_INTERVAL: Duration = Duration::from_millis(100);
 const PCA9685_ADDRESS: u8 = 0x40;
