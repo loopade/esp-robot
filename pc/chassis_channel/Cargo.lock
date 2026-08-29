@@ -100,6 +100,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shared-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "syn"
 version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -116,6 +123,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "shared-protocol",
  "tiny_http",
 ]
 

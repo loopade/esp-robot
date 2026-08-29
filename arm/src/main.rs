@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use arm::{SharedArmState, ARM_CONFIG, JOINT_COUNT};
+use shared_protocol::valid_joint_names;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::units::FromValueType as _;
@@ -86,7 +87,7 @@ fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
 
     match command {
         ArmCommand::JointGoal { name, position, velocity: _, seq } => {
-            if name.len() != JOINT_COUNT || name.iter().enumerate().any(|(i, n)| n != &format!("joint_{}", i + 1)) {
+            if !valid_joint_names(&name) {
                 log::warn!("ignoring joint_goal from {peer}: invalid joint names");
                 return;
             }

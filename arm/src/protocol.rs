@@ -1,21 +1,7 @@
-use serde::{Deserialize, Serialize};
+pub use shared_protocol::ArmCommand;
+use serde::Serialize;
 
 use crate::arm::{TelemetryState, JOINT_COUNT};
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ArmCommand {
-    JointGoal {
-        name: Vec<String>,
-        position: Vec<f32>,
-        velocity: Option<Vec<f32>>,
-        seq: Option<u64>,
-    },
-    SpeedScale {
-        value: f32,
-    },
-    Ping,
-}
 
 #[derive(Debug, Serialize)]
 pub struct JointStatePacket {
