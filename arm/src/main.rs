@@ -8,6 +8,9 @@ use std::convert::TryInto;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
+use embassy_executor::Executor;
+use embassy_time::Timer;
+use static_cell::StaticCell;
 
 use anyhow::{Context, Result};
 use arm::{SharedArmState, ARM_CONFIG, JOINT_COUNT};
@@ -22,12 +25,17 @@ const CONTROL_LOOP_PERIOD: Duration = Duration::from_millis(33);
 const TELEMETRY_INTERVAL: Duration = Duration::from_millis(100);
 const PCA9685_ADDRESS: u8 = 0x40;
 
-fn main() -> Result<()> {
+#[embassy_executor::task]
+async fn arm_task() {
+    if let Err(error) = arm_run().await { log::error!("arm task failed: {error:?}"); }
+}
+
+async fn arm_run() -> Result<()> {
     setup::init();
     log::info!("starting esp32-arm firmware");
 
-    let peripherals = Peripherals::take().context("failed to take ESP32 peripherals")?;
-    let _wifi = wifi::connect(peripherals.modem).context("wifi setup failed")?;
+    let peripherals = Peripherals::take().expect("failed to take ESP32 peripherals");
+    let _wifi = wifi::connect(peripherals.modem).await.expect("wifi setup failed");
 
     let i2c_config = I2cConfig::new().baudrate(100.kHz().into());
     let i2c = I2cDriver::new(
@@ -48,12 +56,7 @@ fn main() -> Result<()> {
         .context("failed to switch UDP socket to nonblocking mode")?;
     log::info!("listening for arm commands on udp://{UDP_BIND_ADDR}");
 
-    control_loop(pwm, socket, state);
-
-    #[allow(unreachable_code)]
-    {
-        Ok(())
-    }
+    control_loop(pwm, socket, state).await;
 }
 
 fn receive_pending_commands(socket: &UdpSocket, state: &mut SharedArmState) {
@@ -108,7 +111,7 @@ fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
     }
 }
 
-fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut state: SharedArmState) -> ! {
+async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut state: SharedArmState) -> ! {
     if let Err(error) = apply_joint_positions(&mut pwm, &state.current_deg) {
         log::error!("failed to apply initial pose: {error:?}");
     }
@@ -148,9 +151,15 @@ fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut state: Sha
 
         let elapsed = cycle_started.elapsed();
         if elapsed < CONTROL_LOOP_PERIOD {
-            std::thread::sleep(CONTROL_LOOP_PERIOD - elapsed);
+            Timer::after(embassy_time::Duration::from_millis((CONTROL_LOOP_PERIOD - elapsed).as_millis() as u64)).await;
         }
     }
+}
+
+fn main() {
+    static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+    let executor = EXECUTOR.init(Executor::new());
+    executor.run(|spawner| spawner.spawn(arm_task()).expect("failed to spawn arm task"));
 }
 
 fn apply_joint_positions(
