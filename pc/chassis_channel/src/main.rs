@@ -97,6 +97,17 @@ fn drive(left: i16, right: i16, seconds: f32) -> io::Result<()> {
     Ok(())
 }
 
+fn arm_goal(host: &str, positions_deg: &[f32]) -> io::Result<()> {
+    if positions_deg.len() != 6 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "arm requires 6 joint angles")); }
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    let names: Vec<String> = (1..=6).map(|i| format!("joint_{i}")).collect();
+    let position: Vec<f32> = positions_deg.iter().map(|value| value.to_radians()).collect();
+    let payload = json!({"type": "joint_goal", "name": names, "position": position});
+    socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888"))?;
+    println!("sent JointState-compatible arm goal to {host}:8888");
+    Ok(())
+}
+
 fn command_loop(control: Arc<Mutex<ControlState>>) -> io::Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_multicast_ttl_v4(1)?;
@@ -239,8 +250,9 @@ fn main() -> io::Result<()> {
             args[3].parse().expect("right must be -1000..1000"),
             args[4].parse().expect("seconds must be numeric"),
         ),
+        Some("arm") if args.len() == 9 => arm_goal(&args[2], &args[3..9].iter().map(|v| v.parse().expect("joint angle must be numeric")).collect::<Vec<f32>>()),
         _ => {
-            eprintln!("Usage:\n  tank-pc-channel web\n  tank-pc-channel monitor\n  tank-pc-channel drive LEFT RIGHT SECONDS");
+            eprintln!("Usage:\n  tank-pc-channel web\n  tank-pc-channel monitor\n  tank-pc-channel drive LEFT RIGHT SECONDS\n  tank-pc-channel arm HOST J1 J2 J3 J4 J5 J6");
             Ok(())
         }
     }

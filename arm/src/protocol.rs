@@ -6,8 +6,9 @@ use crate::arm::{TelemetryState, JOINT_COUNT};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ArmCommand {
     JointGoal {
-        positions_deg: Vec<f32>,
-        speed_scale: Option<f32>,
+        name: Vec<String>,
+        position: Vec<f32>,
+        velocity: Option<Vec<f32>>,
         seq: Option<u64>,
     },
     SpeedScale {

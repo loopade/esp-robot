@@ -85,12 +85,13 @@ fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
     state.set_last_peer(peer);
 
     match command {
-        ArmCommand::JointGoal {
-            positions_deg,
-            speed_scale,
-            seq,
-        } => {
-            let positions_deg: [f32; JOINT_COUNT] = match positions_deg.try_into() {
+        ArmCommand::JointGoal { name, position, velocity: _, seq } => {
+            if name.len() != JOINT_COUNT || name.iter().enumerate().any(|(i, n)| n != &format!("joint_{}", i + 1)) {
+                log::warn!("ignoring joint_goal from {peer}: invalid joint names");
+                return;
+            }
+            let positions_deg: [f32; JOINT_COUNT] = match position
+                .into_iter().map(|value| value.to_degrees()).collect::<Vec<_>>().try_into() {
                 Ok(positions) => positions,
                 Err(values) => {
                     log::warn!(
@@ -100,7 +101,7 @@ fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
                     return;
                 }
             };
-            state.apply_goal(positions_deg, speed_scale, seq);
+            state.apply_goal(positions_deg, None, seq);
         }
         ArmCommand::SpeedScale { value } => {
             state.set_speed_scale(value);
