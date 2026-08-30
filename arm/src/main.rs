@@ -4,7 +4,6 @@ mod protocol;
 mod setup;
 mod wifi;
 
-use std::convert::TryInto;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
@@ -14,11 +13,10 @@ use static_cell::StaticCell;
 
 use anyhow::{Context, Result};
 use arm::{SharedArmState, ARM_CONFIG, JOINT_COUNT};
-use shared_protocol::valid_joint_names;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::units::FromValueType as _;
-use protocol::{ArmCommand, JointStatePacket};
+use protocol::JointStatePacket;
 
 const UDP_BIND_ADDR: &str = "0.0.0.0:8888";
 const CONTROL_LOOP_PERIOD: Duration = Duration::from_millis(33);
@@ -75,40 +73,18 @@ fn receive_pending_commands(socket: &UdpSocket, state: &mut SharedArmState) {
 }
 
 fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
-    let command = match serde_json_core::from_slice::<ArmCommand>(packet) {
-        Ok((command, _)) => command,
-        Err(error) => {
-            log::warn!("ignoring invalid command from {peer}: {error}");
-            return;
-        }
-    };
+    let text = match core::str::from_utf8(packet) { Ok(value) => value, Err(_) => return };
+    if !text.contains("\"type\":\"joint_goal\"") { return; }
+    let Some(start) = text.find("\"position\":[") else { return; };
+    let rest = &text[start + 13..];
+    let Some(end) = rest.find(']') else { return; };
+    let values: Vec<f32> = rest[..end].split(',').filter_map(|v| v.trim().parse().ok()).collect();
+    if values.len() != JOINT_COUNT { return; }
+    let mut positions_deg = [0.0; JOINT_COUNT];
+    for (index, value) in values.into_iter().enumerate() { positions_deg[index] = value.to_degrees(); }
 
     state.set_last_peer(peer);
-
-    match command {
-        ArmCommand::JointGoal { name, position, velocity: _, seq } => {
-            if !valid_joint_names(&name) {
-                log::warn!("ignoring joint_goal from {peer}: invalid joint names");
-                return;
-            }
-            let positions_deg: [f32; JOINT_COUNT] = match position
-                .into_iter().map(|value| value.to_degrees()).collect::<Vec<_>>().try_into() {
-                Ok(positions) => positions,
-                Err(values) => {
-                    log::warn!(
-                        "ignoring joint_goal from {peer}: expected {JOINT_COUNT} values, got {}",
-                        values.len()
-                    );
-                    return;
-                }
-            };
-            state.apply_goal(positions_deg, None, seq);
-        }
-        ArmCommand::SpeedScale { value } => {
-            state.set_speed_scale(value);
-        }
-        ArmCommand::Ping => {}
-    }
+    state.apply_goal(positions_deg, None, None);
 }
 
 async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut state: SharedArmState) -> ! {

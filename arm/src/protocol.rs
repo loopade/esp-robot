@@ -1,4 +1,3 @@
-pub use shared_protocol::ArmCommand;
 use serde::Serialize;
 
 use crate::arm::{TelemetryState, JOINT_COUNT};
