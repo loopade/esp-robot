@@ -279,7 +279,7 @@ fn main() -> io::Result<()> {
         ),
         Some("arm") if args.len() == 9 => arm_goal(&args[2], &args[3..9].iter().map(|v| v.parse().expect("joint angle must be numeric")).collect::<Vec<f32>>()),
         _ => {
-            eprintln!("Usage:\n  tank-pc-channel web\n  tank-pc-channel monitor\n  tank-pc-channel drive LEFT RIGHT SECONDS\n  tank-pc-channel arm HOST J1 J2 J3 J4 J5 J6");
+            eprintln!("Usage:\n  robot-control-center web\n  robot-control-center monitor\n  robot-control-center drive LEFT RIGHT SECONDS\n  robot-control-center arm HOST J1 J2 J3 J4 J5 J6");
             Ok(())
         }
     }

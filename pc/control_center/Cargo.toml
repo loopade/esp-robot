@@ -1,5 +1,5 @@
 [package]
-name = "tank-pc-channel"
+name = "robot-control-center"
 version = "0.1.0"
 edition = "2021"
 

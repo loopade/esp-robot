@@ -57,6 +57,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "robot-control-center"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shared-protocol",
+ "tiny_http",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -115,16 +125,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "tank-pc-channel"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "shared-protocol",
- "tiny_http",
 ]
 
 [[package]]
