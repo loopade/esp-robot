@@ -75,8 +75,8 @@ fn receive_pending_commands(socket: &UdpSocket, state: &mut SharedArmState) {
 }
 
 fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
-    let command = match serde_json::from_slice::<ArmCommand>(packet) {
-        Ok(command) => command,
+    let command = match serde_json_core::from_slice::<ArmCommand>(packet) {
+        Ok((command, _)) => command,
         Err(error) => {
             log::warn!("ignoring invalid command from {peer}: {error}");
             return;
