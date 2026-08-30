@@ -9,6 +9,7 @@ const PASSWORD: &str = env!("WIFI_PASS");
 pub async fn connect(
     modem: esp_idf_svc::hal::modem::Modem,
 ) -> anyhow::Result<AsyncWifi<EspWifi<'static>>> {
+    return esp_common::connect_wifi(modem, "tracked-arm").await;
     let sys_loop = EspSystemEventLoop::take()?;
     let _events = sys_loop.subscribe::<WifiEvent, _>(|event| {
         if let WifiEvent::StaDisconnected(info) = event { log::warn!("wifi disconnected: reason={}", info.reason()); }

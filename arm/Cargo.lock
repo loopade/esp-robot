@@ -627,6 +627,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "embedded-svc",
+ "esp-idf-svc",
+ "heapless",
+ "log",
+]
+
+[[package]]
 name = "esp-idf-hal"
 version = "0.45.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -698,6 +709,7 @@ dependencies = [
  "embassy-time",
  "embedded-svc",
  "embuild",
+ "esp-common",
  "esp-idf-hal",
  "esp-idf-svc",
  "log",

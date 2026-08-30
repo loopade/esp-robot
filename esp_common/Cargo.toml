@@ -1,0 +1,11 @@
+[package]
+name = "esp-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+embedded-svc = "0.28"
+esp-idf-svc = "0.51"
+log = "0.4"
+heapless = "0.8"

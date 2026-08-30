@@ -18,6 +18,7 @@ const FALLBACK_PASSWORD: &str = env!("WIFI_FALLBACK_PASS");
 pub async fn connect(
     modem: esp_idf_svc::hal::modem::Modem,
 ) -> anyhow::Result<AsyncWifi<EspWifi<'static>>> {
+    return esp_common::connect_wifi(modem, FALLBACK_SSID).await;
     let sys_loop = EspSystemEventLoop::take()?;
     let _wifi_events = sys_loop.subscribe::<WifiEvent, _>(|event| {
         if let WifiEvent::StaDisconnected(info) = event {

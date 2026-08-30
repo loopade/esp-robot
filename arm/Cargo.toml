@@ -22,6 +22,7 @@ default = []
 experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
+esp-common = { path = "../esp_common" }
 embassy-executor = { version = "0.7", features = ["executor-thread", "arch-std"] }
 embassy-time = "0.4"
 static_cell = "2"
