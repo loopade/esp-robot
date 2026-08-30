@@ -14,6 +14,7 @@ const MULTICAST_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 42, 99);
 const CONTROL_DESTINATION: &str = "239.255.42.99:4210";
 const TELEMETRY_BIND: &str = "0.0.0.0:4211";
 const WEB_BIND: &str = "127.0.0.1:8080";
+const DISCOVERY_BIND: &str = "0.0.0.0:4209";
 const PERIOD: Duration = Duration::from_millis(20);
 const DEADMAN: Duration = Duration::from_millis(350);
 const INDEX_HTML: &str = include_str!("../web/index.html");
@@ -42,6 +43,7 @@ struct TelemetryState {
     peer: Option<String>,
     payload: Option<Value>,
     updated: Option<Instant>,
+    devices: Vec<Value>,
 }
 
 #[derive(Deserialize)]
@@ -144,6 +146,21 @@ fn telemetry_loop(telemetry: Arc<Mutex<TelemetryState>>) -> io::Result<()> {
     }
 }
 
+fn discovery_loop(telemetry: Arc<Mutex<TelemetryState>>) -> io::Result<()> {
+    let socket = UdpSocket::bind(DISCOVERY_BIND)?;
+    socket.join_multicast_v4(&MULTICAST_GROUP, &Ipv4Addr::UNSPECIFIED)?;
+    let mut buf = [0u8; 2048];
+    loop {
+        let (len, peer) = socket.recv_from(&mut buf)?;
+        if let Ok(mut payload) = serde_json::from_slice::<Value>(&buf[..len]) {
+            if let Some(object) = payload.as_object_mut() { object.insert("peer".into(), json!(peer.ip().to_string())); }
+            let mut state = telemetry.lock().unwrap();
+            state.devices.retain(|item| item.get("peer") != Some(&json!(peer.ip().to_string())));
+            state.devices.push(payload);
+        }
+    }
+}
+
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name, value).unwrap()
 }
@@ -163,6 +180,10 @@ fn web() -> io::Result<()> {
                 eprintln!("Command UDP error: {error}")
             }
         });
+    }
+    {
+        let state = Arc::clone(&telemetry);
+        thread::spawn(move || { let _ = discovery_loop(state); });
     }
     {
         let state = Arc::clone(&telemetry);
@@ -199,7 +220,8 @@ fn web() -> io::Result<()> {
                 let _ = request.respond(json_response(json!({
                     "command": {"left":command.left,"right":command.right,"armed":command.armed && command.updated.elapsed() <= DEADMAN},
                     "telemetry":telemetry.payload,"peer":telemetry.peer,"telemetry_age_ms":age,
-                    "online":age.map(|value| value < 1000).unwrap_or(false)
+                    "online":age.map(|value| value < 1000).unwrap_or(false),
+                    "devices": telemetry.devices
                 })));
             }
             (&Method::Post, "/api/control") => {
