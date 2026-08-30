@@ -220,7 +220,7 @@ fn web() -> io::Result<()> {
                 let _ = request.respond(json_response(json!({
                     "command": {"left":command.left,"right":command.right,"armed":command.armed && command.updated.elapsed() <= DEADMAN},
                     "telemetry":telemetry.payload,"peer":telemetry.peer,"telemetry_age_ms":age,
-                    "online":age.map(|value| value < 1000).unwrap_or(false),
+                    "online": age.map(|value| value < 1000).unwrap_or(false) || !telemetry.devices.is_empty(),
                     "devices": telemetry.devices
                 })));
             }
