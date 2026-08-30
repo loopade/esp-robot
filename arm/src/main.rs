@@ -21,6 +21,7 @@ use protocol::JointStatePacket;
 const UDP_BIND_ADDR: &str = "0.0.0.0:8888";
 const CONTROL_LOOP_PERIOD: Duration = Duration::from_millis(33);
 const TELEMETRY_INTERVAL: Duration = Duration::from_millis(100);
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(1);
 const PCA9685_ADDRESS: u8 = 0x40;
 
 #[embassy_executor::task]
@@ -93,6 +94,7 @@ async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut stat
     }
 
     let mut last_telemetry = Instant::now();
+    let mut last_discovery = Instant::now();
 
     loop {
         let cycle_started = Instant::now();
@@ -109,6 +111,11 @@ async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut stat
         if last_telemetry.elapsed() >= TELEMETRY_INTERVAL {
             telemetry_packet = Some(JointStatePacket::from(state.telemetry()));
             telemetry_peer = state.last_peer;
+        }
+        if last_discovery.elapsed() >= DISCOVERY_INTERVAL {
+            let hello = b"{\"type\":\"hello\",\"device\":\"arm\",\"name\":\"arm-esp32\",\"control_port\":8888}";
+            let _ = socket.send_to(hello, "239.255.42.99:4209");
+            last_discovery = Instant::now();
         }
 
         if let Some(positions) = positions_to_apply {

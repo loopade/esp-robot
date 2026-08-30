@@ -5,6 +5,8 @@ pub const JOINT_COUNT: usize = 6;
 pub const ARM_UDP_PORT: u16 = 8888;
 pub const CHASSIS_CONTROL_PORT: u16 = 4210;
 pub const CHASSIS_TELEMETRY_PORT: u16 = 4211;
+pub const DISCOVERY_GROUP: &str = "239.255.42.99";
+pub const DISCOVERY_PORT: u16 = 4209;
 
 pub fn arm_udp_bind() -> String {
     format!("0.0.0.0:{ARM_UDP_PORT}")
