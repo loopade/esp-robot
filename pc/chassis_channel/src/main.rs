@@ -254,6 +254,11 @@ fn web() -> io::Result<()> {
                 state.updated = Instant::now();
                 let _ = request.respond(json_response(json!({"ok":true})));
             }
+            (&Method::Post, "/api/arm") => {
+                let mut body = String::new();
+                let parsed = request.as_reader().take(4096).read_to_string(&mut body).ok().and_then(|_| serde_json::from_str::<Value>(&body).ok());
+                if let Some(value) = parsed { if let (Some(host), Some(position)) = (value.get("host").and_then(Value::as_str), value.get("position").and_then(Value::as_array)) { let socket = UdpSocket::bind("0.0.0.0:0"); if let Ok(socket) = socket { let payload = json!({"type":"joint_goal","name":["joint_1","joint_2","joint_3","joint_4","joint_5","joint_6"],"position":position}); let _ = socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888")); } let _ = request.respond(json_response(json!({"ok":true}))); } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); } } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); }
+            }
             _ => {
                 let _ = request.respond(Response::empty(StatusCode(404)));
             }
