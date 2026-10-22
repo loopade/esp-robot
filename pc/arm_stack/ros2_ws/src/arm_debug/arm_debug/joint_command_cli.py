@@ -41,8 +41,8 @@ def main(args=None) -> None:
     parser.add_argument("--deg", required=True, type=float, help="Target angle in degrees")
     parsed_args = parser.parse_args(args=args)
 
-    joint_names = [f"joint_{index}" for index in range(1, 7)]
-    positions_deg = [0.0] * 6
+    joint_names = [f"joint_{index}" for index in range(1, 6)]
+    positions_deg = [0.0] * 5
 
     if parsed_args.joint not in joint_names:
         raise SystemExit(f"Unknown joint: {parsed_args.joint}")

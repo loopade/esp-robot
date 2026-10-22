@@ -47,15 +47,6 @@
 
 修改 `.cargo/config.toml` 中的 `WIFI_SSID`、`WIFI_PASS`。
 
-ESP32 还会始终建立备用 WPA2 热点：
-
-```text
-SSID: tracked-chassis
-密码由 `WIFI_FALLBACK_PASS` 本地配置，不要提交真实密码。
-```
-
-如果连接家庭路由器失败，电脑直接连接 `tracked-chassis` 即可继续使用数字孪生和视觉通道。
-
 - ESP32 加入标准 IPv4 多播组 `239.255.42.99`。
 - 多播 UDP `239.255.42.99:4210`：二进制自动驾驶指令。
 - 多播 UDP `239.255.42.99:4211`：10 Hz JSON 遥测和设备自动发现。
@@ -100,8 +91,7 @@ cargo run --release
 espflash flash --monitor --port COM5 target/xtensa-esp32-espidf/release/tracked-chassis
 ```
 
-当前开发板串口为 `COM3`。固件已完成实机烧录；启动后会同时连接 `universe`，并建立
-`tracked-chassis` 备用热点（默认 IP `192.168.71.1`）。
+???????? `COM3`?????????? Wi-Fi ???
 
 ## 首次动力测试
 

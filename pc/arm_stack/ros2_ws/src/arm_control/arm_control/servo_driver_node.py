@@ -146,16 +146,16 @@ class ServoDriverNode(Node):
         self.declare_parameter("target_state_topic", "/arm/target_joint_states")
         self.declare_parameter(
             "joint_names",
-            ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
+            ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
         )
-        self.declare_parameter("servo_channels", [0, 1, 2, 3, 4, 5])
-        self.declare_parameter("home_position_deg", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        self.declare_parameter("direction_signs", [1, 1, 1, 1, 1, 1])
-        self.declare_parameter("angle_offsets_deg", [90.0, 90.0, 90.0, 90.0, 90.0, 90.0])
-        self.declare_parameter("min_angle_deg", [-90.0, -90.0, -90.0, -90.0, -90.0, -90.0])
-        self.declare_parameter("max_angle_deg", [90.0, 90.0, 90.0, 90.0, 90.0, 90.0])
-        self.declare_parameter("servo_min_deg", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        self.declare_parameter("servo_max_deg", [180.0, 180.0, 180.0, 180.0, 180.0, 180.0])
+        self.declare_parameter("servo_channels", [0, 1, 2, 3, 4])
+        self.declare_parameter("home_position_deg", [0.0, 0.0, 0.0, 0.0, 0.0])
+        self.declare_parameter("direction_signs", [1, 1, 1, 1, 1])
+        self.declare_parameter("angle_offsets_deg", [90.0, 90.0, 90.0, 90.0, 90.0])
+        self.declare_parameter("min_angle_deg", [-90.0, -90.0, -90.0, -90.0, -90.0])
+        self.declare_parameter("max_angle_deg", [90.0, 90.0, 90.0, 90.0, 90.0])
+        self.declare_parameter("servo_min_deg", [0.0, 0.0, 0.0, 0.0, 0.0])
+        self.declare_parameter("servo_max_deg", [180.0, 180.0, 180.0, 180.0, 180.0])
         self.declare_parameter("fixed_output_channels", [12])
         self.declare_parameter("fixed_output_angles_deg", [90.0])
         self.declare_parameter("update_rate_hz", 30.0)

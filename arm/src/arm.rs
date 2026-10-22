@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 
-pub const JOINT_COUNT: usize = 6;
+pub const JOINT_COUNT: usize = 5;
 const CONTROL_PERIOD_SEC: f32 = 1.0 / 30.0;
 const BASE_MAX_STEP_DEG: f32 = 0.8;
-const BASE_MAX_VELOCITY_DEG_S: f32 = 8.0;
+// 100% means a useful 24 deg/s; 300% reaches 72 deg/s.
+const BASE_MAX_VELOCITY_DEG_S: f32 = 24.0;
 const MIN_SPEED_SCALE: f32 = 0.1;
 const MAX_SPEED_SCALE: f32 = 3.0;
 
@@ -24,16 +25,16 @@ pub struct ArmConfig {
 }
 
 pub const ARM_CONFIG: ArmConfig = ArmConfig {
-    servo_channels: [0, 1, 2, 3, 4, 5],
-    home_position_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    direction_signs: [-1.0, -1.0, 1.0, 1.0, 1.0, 1.0],
-    angle_offsets_deg: [90.0, 90.0, 90.0, 90.0, 90.0, 90.0],
-    min_angle_deg: [-180.0, -180.0, -180.0, -180.0, -180.0, -180.0],
-    max_angle_deg: [180.0, 180.0, 180.0, 180.0, 180.0, 180.0],
-    servo_min_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    servo_max_deg: [180.0, 180.0, 180.0, 180.0, 180.0, 180.0],
-    servo_pulse_min_us: [500.0, 500.0, 500.0, 500.0, 500.0, 500.0],
-    servo_pulse_max_us: [2500.0, 2500.0, 2500.0, 2500.0, 2500.0, 2500.0],
+    servo_channels: [0, 1, 2, 3, 4],
+    home_position_deg: [0.0, 0.0, 0.0, 0.0, 0.0],
+    direction_signs: [-1.0, -1.0, 1.0, 1.0, 1.0],
+    angle_offsets_deg: [90.0, 90.0, 90.0, 90.0, 90.0],
+    min_angle_deg: [-90.0, -90.0, -90.0, -90.0, -90.0],
+    max_angle_deg: [90.0, 90.0, 90.0, 90.0, 90.0],
+    servo_min_deg: [0.0, 0.0, 0.0, 0.0, 0.0],
+    servo_max_deg: [180.0, 180.0, 180.0, 180.0, 180.0],
+    servo_pulse_min_us: [500.0, 500.0, 500.0, 500.0, 500.0],
+    servo_pulse_max_us: [2500.0, 2500.0, 2500.0, 2500.0, 2500.0],
     fixed_output_channels: [12],
     fixed_output_angles_deg: [90.0],
 };
@@ -52,6 +53,10 @@ pub struct TelemetryState {
     pub current_deg: [f32; JOINT_COUNT],
     pub target_deg: [f32; JOINT_COUNT],
     pub speed_scale: f32,
+    pub startup_calibrated: bool,
+    pub startup_deg: [f32; JOINT_COUNT],
+    pub min_angle_deg: [f32; JOINT_COUNT],
+    pub max_angle_deg: [f32; JOINT_COUNT],
 }
 
 pub struct SharedArmState {
@@ -62,20 +67,50 @@ pub struct SharedArmState {
     command_seq: u64,
     motion_plan: Option<MotionPlan>,
     pub last_peer: Option<SocketAddr>,
+    startup_calibrated: bool,
+    startup_deg: [f32; JOINT_COUNT],
+    min_angle_deg: [f32; JOINT_COUNT],
+    max_angle_deg: [f32; JOINT_COUNT],
 }
 
 impl SharedArmState {
-    pub fn new(config: &'static ArmConfig) -> Self {
+    pub fn new(config: &'static ArmConfig, startup_pose: [f32; JOINT_COUNT], startup_calibrated: bool) -> Self {
         Self {
             config,
-            current_deg: config.home_position_deg,
-            target_deg: config.home_position_deg,
+            current_deg: startup_pose,
+            target_deg: startup_pose,
             speed_scale: 1.0,
             command_seq: 0,
             motion_plan: None,
             last_peer: None,
+            startup_calibrated,
+            startup_deg: startup_pose,
+            min_angle_deg: config.min_angle_deg,
+            max_angle_deg: config.max_angle_deg,
         }
     }
+
+    pub fn set_startup_pose(&mut self, pose: [f32; JOINT_COUNT]) {
+        self.startup_deg = self.clamp_pose(pose);
+        self.startup_calibrated = true;
+    }
+
+    pub fn set_joint_limits(&mut self, minimum: [f32; JOINT_COUNT], maximum: [f32; JOINT_COUNT]) -> bool {
+        if (0..JOINT_COUNT).any(|i| !minimum[i].is_finite() || !maximum[i].is_finite() || minimum[i] >= maximum[i]) { return false; }
+        self.min_angle_deg = minimum;
+        self.max_angle_deg = maximum;
+        self.startup_deg = self.clamp_pose(self.startup_deg);
+        self.target_deg = self.clamp_pose(self.target_deg);
+        self.current_deg = self.clamp_pose(self.current_deg);
+        self.motion_plan = Some(MotionPlan::new(self.current_deg, self.target_deg, self.speed_scale));
+        true
+    }
+
+    fn clamp_pose(&self, pose: [f32; JOINT_COUNT]) -> [f32; JOINT_COUNT] {
+        core::array::from_fn(|i| clamp(pose[i], self.min_angle_deg[i], self.max_angle_deg[i]))
+    }
+
+    pub fn clamp_to_joint_limits(&self, pose: [f32; JOINT_COUNT]) -> [f32; JOINT_COUNT] { self.clamp_pose(pose) }
 
     pub fn apply_goal(
         &mut self,
@@ -83,6 +118,7 @@ impl SharedArmState {
         speed_scale: Option<f32>,
         seq: Option<u64>,
     ) {
+        let previous_speed_scale = self.speed_scale;
         if let Some(value) = speed_scale {
             self.speed_scale = clamp(value, MIN_SPEED_SCALE, MAX_SPEED_SCALE);
         }
@@ -91,9 +127,18 @@ impl SharedArmState {
         for index in 0..JOINT_COUNT {
             target[index] = clamp(
                 positions_deg[index],
-                self.config.min_angle_deg[index],
-                self.config.max_angle_deg[index],
+                self.min_angle_deg[index],
+                self.max_angle_deg[index],
             );
+        }
+
+        // Web real-time mode repeats goals periodically. Keep the in-flight
+        // trajectory when a repeated goal has not changed.
+        if target == self.target_deg {
+            if self.speed_scale != previous_speed_scale && self.motion_plan.is_some() {
+                self.motion_plan = Some(MotionPlan::new(self.current_deg, target, self.speed_scale));
+            }
+            return;
         }
 
         self.target_deg = target;
@@ -148,6 +193,10 @@ impl SharedArmState {
             current_deg: self.current_deg,
             target_deg: self.target_deg,
             speed_scale: self.speed_scale,
+            startup_calibrated: self.startup_calibrated,
+            startup_deg: self.startup_deg,
+            min_angle_deg: self.min_angle_deg,
+            max_angle_deg: self.max_angle_deg,
         }
     }
 }

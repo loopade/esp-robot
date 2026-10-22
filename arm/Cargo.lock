@@ -641,6 +641,7 @@ name = "esp-common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "embassy-time",
  "embedded-svc",
  "esp-idf-svc",
  "heapless",

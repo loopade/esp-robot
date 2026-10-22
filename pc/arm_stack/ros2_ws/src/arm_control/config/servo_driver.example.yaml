@@ -16,36 +16,33 @@
       - joint_3
       - joint_4
       - joint_5
-      - joint_6
     joint_labels:
       - "base_rotate"
       - "shoulder"
       - "elbow"
       - "wrist"
-      - "gripper_rotate"
-      - "gripper_claw"
+      - "gripper"
     joint_servo_models:
       - MG996R
       - MG996R
       - MG996R
       - MG90S
       - MG90S
-      - MG90S
-    channel_mapping_note: "0=base, 1=shoulder, 2=elbow, 3=wrist, 4=gripper_rotate, 5=gripper_claw"
-    servo_channels: [0, 1, 2, 3, 4, 5]
+    channel_mapping_note: "0=base, 1=shoulder, 2=elbow, 3=wrist, 4=gripper"
+    servo_channels: [0, 1, 2, 3, 4]
     gripper_servo_model: "MG90S"
     power_supply: "6V 5A"
-    home_position_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    direction_signs: [-1, -1, 1, 1, 1, 1]
-    angle_offsets_deg: [90.0, 90.0, 90.0, 90.0, 90.0, 90.0]
-    min_angle_deg: [-90.0, -90.0, -90.0, -90.0, -90.0, -90.0]
-    max_angle_deg: [90.0, 90.0, 90.0, 90.0, 90.0, 90.0]
-    servo_min_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    servo_max_deg: [180.0, 180.0, 180.0, 180.0, 180.0, 180.0]
+    home_position_deg: [0.0, 0.0, 0.0, 0.0, 0.0]
+    direction_signs: [-1, -1, 1, 1, 1]
+    angle_offsets_deg: [90.0, 90.0, 90.0, 90.0, 90.0]
+    min_angle_deg: [-90.0, -90.0, -90.0, -90.0, -90.0]
+    max_angle_deg: [90.0, 90.0, 90.0, 90.0, 90.0]
+    servo_min_deg: [0.0, 0.0, 0.0, 0.0, 0.0]
+    servo_max_deg: [180.0, 180.0, 180.0, 180.0, 180.0]
     fixed_output_channels: [12]
     fixed_output_angles_deg: [90.0]
-    target_min_deg: [-90.0, -90.0, -90.0, -90.0, -90.0, -90.0]
-    target_max_deg: [90.0, 90.0, 90.0, 90.0, 90.0, 90.0]
+    target_min_deg: [-90.0, -90.0, -90.0, -90.0, -90.0]
+    target_max_deg: [90.0, 90.0, 90.0, 90.0, 90.0]
     update_rate_hz: 30.0
     max_step_deg: 0.8
     max_velocity_deg_s: 8.0

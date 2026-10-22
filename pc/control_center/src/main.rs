@@ -100,9 +100,9 @@ fn drive(left: i16, right: i16, seconds: f32) -> io::Result<()> {
 }
 
 fn arm_goal(host: &str, positions_deg: &[f32]) -> io::Result<()> {
-    if positions_deg.len() != 6 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "arm requires 6 joint angles")); }
+    if positions_deg.len() != 5 { return Err(io::Error::new(io::ErrorKind::InvalidInput, "arm requires 5 joint angles")); }
     let socket = UdpSocket::bind("0.0.0.0:0")?;
-    let names: Vec<String> = (1..=6).map(|i| format!("joint_{i}")).collect();
+    let names: Vec<String> = (1..=5).map(|i| format!("joint_{i}")).collect();
     let position: Vec<f32> = positions_deg.iter().map(|value| value.to_radians()).collect();
     let payload = json!({"type": "joint_goal", "name": names, "position": position});
     socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888"))?;
@@ -139,15 +139,28 @@ fn telemetry_loop(telemetry: Arc<Mutex<TelemetryState>>) -> io::Result<()> {
         let (len, peer) = socket.recv_from(&mut buf)?;
         if let Ok(payload) = serde_json::from_slice::<Value>(&buf[..len]) {
             let mut state = telemetry.lock().unwrap();
-            state.peer = Some(peer.to_string());
-            state.payload = Some(payload);
-            state.updated = Some(Instant::now());
+            let packet_type = payload.get("type").and_then(Value::as_str);
+            if payload.get("device").and_then(Value::as_str) == Some("arm") {
+                let mut device = payload.clone();
+                if let Some(object) = device.as_object_mut() { object.insert("peer".into(), json!(peer.ip().to_string())); }
+                state.devices.retain(|item| item.get("peer") != Some(&json!(peer.ip().to_string())));
+                state.devices.push(device);
+            }
+            // Discovery hello packets share this multicast port with arm
+            // telemetry. Keep the last actual telemetry packet available to
+            // the web page instead of replacing it with a packet without pose.
+            if packet_type != Some("hello") {
+                state.peer = Some(peer.to_string());
+                state.payload = Some(payload);
+                state.updated = Some(Instant::now());
+            }
         }
     }
 }
 
 fn discovery_loop(telemetry: Arc<Mutex<TelemetryState>>) -> io::Result<()> {
     let socket = UdpSocket::bind(DISCOVERY_BIND)?;
+    socket.set_broadcast(true)?;
     socket.join_multicast_v4(&MULTICAST_GROUP, &Ipv4Addr::UNSPECIFIED)?;
     let mut buf = [0u8; 2048];
     loop {
@@ -254,10 +267,36 @@ fn web() -> io::Result<()> {
                 state.updated = Instant::now();
                 let _ = request.respond(json_response(json!({"ok":true})));
             }
+            (&Method::Post, "/api/arm/startup") => {
+                let mut body = String::new();
+                let parsed = request.as_reader().take(4096).read_to_string(&mut body).ok().and_then(|_| serde_json::from_str::<Value>(&body).ok());
+                if let Some(value) = parsed { if let (Some(host), Some(position)) = (value.get("host").and_then(Value::as_str), value.get("position").and_then(Value::as_array)) {
+                    let valid = position.len() == 5 && position.iter().all(|v| v.as_f64().map(|n| n.is_finite()).unwrap_or(false));
+                    if !valid { let _ = request.respond(json_response(json!({"ok":false,"error":"position must contain five finite numbers"})).with_status_code(StatusCode(400))); continue; }
+                    let payload = json!({"type":"set_startup_pose","position":position});
+                    match UdpSocket::bind("0.0.0.0:0").and_then(|socket| socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888"))) {
+                        Ok(_) => { let _ = request.respond(json_response(json!({"ok":true}))); }
+                        Err(error) => { let _ = request.respond(json_response(json!({"ok":false,"error":error.to_string()})).with_status_code(StatusCode(502))); }
+                    }
+                } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); } } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); }
+            }
+            (&Method::Post, "/api/arm/limits") => {
+                let mut body = String::new();
+                let parsed = request.as_reader().take(4096).read_to_string(&mut body).ok().and_then(|_| serde_json::from_str::<Value>(&body).ok());
+                if let Some(value) = parsed { if let (Some(host), Some(minimum), Some(maximum)) = (value.get("host").and_then(Value::as_str), value.get("min_deg").and_then(Value::as_array), value.get("max_deg").and_then(Value::as_array)) {
+                    let valid = minimum.len() == 5 && maximum.len() == 5 && minimum.iter().zip(maximum.iter()).all(|(a,b)| a.as_f64().zip(b.as_f64()).map(|(a,b)| a.is_finite() && b.is_finite() && a < b).unwrap_or(false));
+                    if !valid { let _ = request.respond(json_response(json!({"ok":false,"error":"five valid min/max pairs required"})).with_status_code(StatusCode(400))); continue; }
+                    let payload = json!({"type":"set_joint_limits","min_deg":minimum,"max_deg":maximum});
+                    match UdpSocket::bind("0.0.0.0:0").and_then(|socket| socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888"))) {
+                        Ok(_) => { let _ = request.respond(json_response(json!({"ok":true}))); }
+                        Err(error) => { let _ = request.respond(json_response(json!({"ok":false,"error":error.to_string()})).with_status_code(StatusCode(502))); }
+                    }
+                } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); } } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); }
+            }
             (&Method::Post, "/api/arm") => {
                 let mut body = String::new();
                 let parsed = request.as_reader().take(4096).read_to_string(&mut body).ok().and_then(|_| serde_json::from_str::<Value>(&body).ok());
-                if let Some(value) = parsed { if let (Some(host), Some(position)) = (value.get("host").and_then(Value::as_str), value.get("position").and_then(Value::as_array)) { let socket = UdpSocket::bind("0.0.0.0:0"); if let Ok(socket) = socket { let payload = json!({"type":"joint_goal","name":["joint_1","joint_2","joint_3","joint_4","joint_5","joint_6"],"position":position}); let _ = socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888")); } let _ = request.respond(json_response(json!({"ok":true}))); } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); } } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); }
+                if let Some(value) = parsed { if let (Some(host), Some(position)) = (value.get("host").and_then(Value::as_str), value.get("position").and_then(Value::as_array)) { let socket = UdpSocket::bind("0.0.0.0:0"); if let Ok(socket) = socket { let speed_scale = value.get("speed_scale").and_then(Value::as_f64).unwrap_or(1.0); let payload = json!({"type":"joint_goal","name":["joint_1","joint_2","joint_3","joint_4","joint_5"],"position":position,"speed_scale":speed_scale}); let _ = socket.send_to(payload.to_string().as_bytes(), format!("{host}:8888")); } let _ = request.respond(json_response(json!({"ok":true}))); } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); } } else { let _ = request.respond(json_response(json!({"ok":false})).with_status_code(StatusCode(400))); }
             }
             _ => {
                 let _ = request.respond(Response::empty(StatusCode(404)));
@@ -277,9 +316,9 @@ fn main() -> io::Result<()> {
             args[3].parse().expect("right must be -1000..1000"),
             args[4].parse().expect("seconds must be numeric"),
         ),
-        Some("arm") if args.len() == 9 => arm_goal(&args[2], &args[3..9].iter().map(|v| v.parse().expect("joint angle must be numeric")).collect::<Vec<f32>>()),
+        Some("arm") if args.len() == 8 => arm_goal(&args[2], &args[3..8].iter().map(|v| v.parse().expect("joint angle must be numeric")).collect::<Vec<f32>>()),
         _ => {
-            eprintln!("Usage:\n  robot-control-center web\n  robot-control-center monitor\n  robot-control-center drive LEFT RIGHT SECONDS\n  robot-control-center arm HOST J1 J2 J3 J4 J5 J6");
+            eprintln!("Usage:\n  robot-control-center web\n  robot-control-center monitor\n  robot-control-center drive LEFT RIGHT SECONDS\n  robot-control-center arm HOST J1 J2 J3 J4 J5");
             Ok(())
         }
     }

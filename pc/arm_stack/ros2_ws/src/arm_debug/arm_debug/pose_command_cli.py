@@ -23,7 +23,7 @@ class PoseCommandCli(Node):
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = [f"joint_{index}" for index in range(1, 7)]
+        msg.name = [f"joint_{index}" for index in range(1, 6)]
         msg.position = [math.radians(value) for value in self._positions_deg]
         self._publisher.publish(msg)
         self.get_logger().info(
@@ -34,8 +34,8 @@ class PoseCommandCli(Node):
 
 def _parse_pose_deg(raw_pose: str) -> List[float]:
     parts = [item.strip() for item in raw_pose.split(",")]
-    if len(parts) != 6:
-        raise SystemExit("Pose must contain exactly 6 comma-separated degree values.")
+    if len(parts) != 5:
+        raise SystemExit("Pose must contain exactly 5 comma-separated degree values.")
 
     try:
         return [float(item) for item in parts]
@@ -52,7 +52,7 @@ def main(args=None) -> int:
     parser.add_argument(
         "--pose-deg",
         required=True,
-        help="Six comma-separated joint targets in degrees, for example 0,10,-15,0,0,20",
+        help="Five comma-separated joint targets in degrees, for example 0,10,-15,0,0,20",
     )
     parsed_args = parser.parse_args(args=args)
 

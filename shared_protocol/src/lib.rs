@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const JOINT_COUNT: usize = 6;
+pub const JOINT_COUNT: usize = 5;
 
 pub const ARM_UDP_PORT: u16 = 8888;
 pub const CHASSIS_CONTROL_PORT: u16 = 4210;

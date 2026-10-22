@@ -17,7 +17,7 @@ class PoseHttpBridgeNode(Node):
 
         self.declare_parameter(
             "joint_names",
-            ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
+            ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"],
         )
         self.declare_parameter("command_topic", "/arm/goal_joint_states")
         self.declare_parameter("joint_state_topic", "/joint_states")
@@ -28,11 +28,11 @@ class PoseHttpBridgeNode(Node):
         self.declare_parameter("max_velocity_deg_s", 8.0)
         self.declare_parameter(
             "target_min_deg",
-            [-120.0, -180.0, -180.0, -180.0, -180.0, -180.0],
+            [-90.0, -90.0, -90.0, -90.0, -90.0],
         )
         self.declare_parameter(
             "target_max_deg",
-            [120.0, 180.0, 180.0, 180.0, 180.0, 180.0],
+            [90.0, 90.0, 90.0, 90.0, 90.0],
         )
 
         self.joint_names = [str(item) for item in self.get_parameter("joint_names").value]
@@ -152,7 +152,7 @@ class PoseHttpBridgeNode(Node):
                     ):
                         self._send_json(
                             HTTPStatus.BAD_REQUEST,
-                            {"ok": False, "error": "positions_deg must contain 6 values"},
+                            {"ok": False, "error": "positions_deg must contain 5 values"},
                         )
                         return
 

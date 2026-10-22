@@ -12,6 +12,7 @@ use embassy_time::Timer;
 use static_cell::StaticCell;
 
 use anyhow::{Context, Result};
+use esp_idf_svc::nvs::EspNvs;
 use arm::{SharedArmState, ARM_CONFIG, JOINT_COUNT};
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
@@ -22,6 +23,7 @@ const UDP_BIND_ADDR: &str = "0.0.0.0:8888";
 const CONTROL_LOOP_PERIOD: Duration = Duration::from_millis(33);
 const TELEMETRY_INTERVAL: Duration = Duration::from_millis(100);
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(1);
+const TELEMETRY_MULTICAST: &str = "239.255.42.99:4211";
 const PCA9685_ADDRESS: u8 = 0x40;
 
 #[embassy_executor::task]
@@ -34,7 +36,7 @@ async fn arm_run() -> Result<()> {
     log::info!("starting esp32-arm firmware");
 
     let peripherals = Peripherals::take().expect("failed to take ESP32 peripherals");
-    let _wifi = wifi::connect(peripherals.modem).await.expect("wifi setup failed");
+    let (_wifi, nvs_partition) = wifi::connect(peripherals.modem).await.expect("wifi setup failed");
 
     let i2c_config = I2cConfig::new().baudrate(100.kHz().into());
     let i2c = I2cDriver::new(
@@ -47,7 +49,40 @@ async fn arm_run() -> Result<()> {
     let pwm = pca9685::Pca9685::new(i2c, PCA9685_ADDRESS, 50.0)
         .context("failed to initialize PCA9685")?;
 
-    let state = SharedArmState::new(&ARM_CONFIG);
+    let nvs = EspNvs::new(nvs_partition, "arm_pose", true)
+        .context("failed to open arm pose NVS namespace")?;
+    let mut startup_pose = [0.0_f32; JOINT_COUNT];
+    let mut stored_pose = [0_u8; JOINT_COUNT * 4];
+    let calibrated = match nvs.get_blob("startup", &mut stored_pose) {
+        Ok(Some(blob)) if blob.len() == JOINT_COUNT * 4 => {
+            for (index, chunk) in blob.chunks_exact(4).enumerate() {
+                startup_pose[index] = f32::from_le_bytes(chunk.try_into().unwrap());
+            }
+            startup_pose.iter().all(|value| value.is_finite())
+        }
+        _ => false,
+    };
+    if calibrated {
+        log::info!("loaded saved startup arm pose: {:?}", startup_pose);
+    } else {
+        startup_pose = ARM_CONFIG.home_position_deg;
+        log::info!("no saved startup arm pose; using configured home pose");
+    }
+
+    let mut minimum = ARM_CONFIG.min_angle_deg;
+    let mut maximum = ARM_CONFIG.max_angle_deg;
+    let mut stored_limits = [0_u8; JOINT_COUNT * 8];
+    if let Ok(Some(blob)) = nvs.get_blob("joint_limits", &mut stored_limits) {
+        if blob.len() == JOINT_COUNT * 8 {
+            for i in 0..JOINT_COUNT {
+                minimum[i] = f32::from_le_bytes(blob[i * 4..i * 4 + 4].try_into().unwrap());
+                let offset = JOINT_COUNT * 4 + i * 4;
+                maximum[i] = f32::from_le_bytes(blob[offset..offset + 4].try_into().unwrap());
+            }
+        }
+    }
+    let mut state = SharedArmState::new(&ARM_CONFIG, startup_pose, calibrated);
+    let _ = state.set_joint_limits(minimum, maximum);
     let socket = UdpSocket::bind(UDP_BIND_ADDR)
         .with_context(|| format!("failed to bind {UDP_BIND_ADDR}"))?;
     socket
@@ -55,15 +90,15 @@ async fn arm_run() -> Result<()> {
         .context("failed to switch UDP socket to nonblocking mode")?;
     log::info!("listening for arm commands on udp://{UDP_BIND_ADDR}");
 
-    control_loop(pwm, socket, state).await;
+    control_loop(pwm, socket, state, nvs).await;
 }
 
-fn receive_pending_commands(socket: &UdpSocket, state: &mut SharedArmState) {
+fn receive_pending_commands(socket: &UdpSocket, state: &mut SharedArmState, nvs: &mut EspNvs<esp_idf_svc::nvs::NvsDefault>) {
     let mut buffer = [0_u8; 1024];
 
     loop {
         match socket.recv_from(&mut buffer) {
-            Ok((size, peer)) => handle_command(&buffer[..size], peer, state),
+            Ok((size, peer)) => handle_command(&buffer[..size], peer, state, nvs),
             Err(error) if error.kind() == ErrorKind::WouldBlock => break,
             Err(error) => {
                 log::error!("udp receive failed: {error}");
@@ -73,32 +108,100 @@ fn receive_pending_commands(socket: &UdpSocket, state: &mut SharedArmState) {
     }
 }
 
-fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState) {
+fn handle_command(packet: &[u8], peer: SocketAddr, state: &mut SharedArmState, nvs: &mut EspNvs<esp_idf_svc::nvs::NvsDefault>) {
     let text = match core::str::from_utf8(packet) { Ok(value) => value, Err(_) => return };
+    if text.contains("\"type\":\"set_startup_pose\"") {
+        if let Some(radians) = extract_positions(text) {
+            let values = radians.map(f32::to_degrees);
+            let mut bytes = [0_u8; JOINT_COUNT * 4];
+            for (index, value) in values.iter().enumerate() {
+                bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            if let Err(error) = nvs.set_blob("startup", &bytes) {
+                log::error!("failed to save startup pose: {error}");
+                return;
+            }
+            state.set_startup_pose(values);
+            log::info!("saved startup arm pose: {:?}", values);
+        }
+        return;
+    }
+    if text.contains("\"type\":\"set_joint_limits\"") {
+        let Some(minimum) = extract_array(text, "min_deg") else { return; };
+        let Some(maximum) = extract_array(text, "max_deg") else { return; };
+        if minimum.iter().zip(maximum.iter()).any(|(min, max)| min >= max) { return; }
+        let mut bytes = [0_u8; JOINT_COUNT * 8];
+        for i in 0..JOINT_COUNT {
+            bytes[i * 4..i * 4 + 4].copy_from_slice(&minimum[i].to_le_bytes());
+            let offset = JOINT_COUNT * 4 + i * 4;
+            bytes[offset..offset + 4].copy_from_slice(&maximum[i].to_le_bytes());
+        }
+        if let Err(error) = nvs.set_blob("joint_limits", &bytes) { log::error!("failed to save joint limits: {error}"); return; }
+        if state.set_joint_limits(minimum, maximum) { log::info!("saved joint limits min={minimum:?} max={maximum:?}"); }
+        return;
+    }
     if !text.contains("\"type\":\"joint_goal\"") { return; }
     let Some(start) = text.find("\"position\":[") else { return; };
-    let rest = &text[start + 13..];
+    // `"position":[` is 12 bytes; keep the first value (including its sign).
+    let rest = &text[start + 12..];
     let Some(end) = rest.find(']') else { return; };
     let values: Vec<f32> = rest[..end].split(',').filter_map(|v| v.trim().parse().ok()).collect();
     if values.len() != JOINT_COUNT { return; }
     let mut positions_deg = [0.0; JOINT_COUNT];
     for (index, value) in values.into_iter().enumerate() { positions_deg[index] = value.to_degrees(); }
+    let speed_scale = extract_number(text, "speed_scale");
 
     state.set_last_peer(peer);
-    state.apply_goal(positions_deg, None, None);
+    state.apply_goal(positions_deg, speed_scale, None);
 }
 
-async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut state: SharedArmState) -> ! {
+fn extract_positions(text: &str) -> Option<[f32; JOINT_COUNT]> {
+    let start = text.find("\"position\":[")? + 12;
+    let rest = &text[start..];
+    let end = rest.find(']')?;
+    let values: Vec<f32> = rest[..end].split(',').filter_map(|v| v.trim().parse().ok()).collect();
+    if values.len() != JOINT_COUNT || values.iter().any(|value| !value.is_finite()) { return None; }
+    let mut result = [0.0; JOINT_COUNT];
+    result.copy_from_slice(&values);
+    Some(result)
+}
+
+fn extract_array(text: &str, key: &str) -> Option<[f32; JOINT_COUNT]> {
+    let marker = format!("\"{key}\":[");
+    let start = text.find(&marker)? + marker.len();
+    let rest = &text[start..];
+    let end = rest.find(']')?;
+    let values: Vec<f32> = rest[..end].split(',').filter_map(|v| v.trim().parse().ok()).collect();
+    if values.len() != JOINT_COUNT || values.iter().any(|v| !v.is_finite()) { return None; }
+    let mut result = [0.0; JOINT_COUNT];
+    result.copy_from_slice(&values);
+    Some(result)
+}
+
+fn extract_number(text: &str, key: &str) -> Option<f32> {
+    let marker = format!("\"{key}\":");
+    let start = text.find(&marker)? + marker.len();
+    let value = text[start..]
+        .split(|character| character == ',' || character == '}' || character == ']')
+        .next()?
+        .trim();
+    value.parse().ok()
+}
+
+async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut state: SharedArmState, mut nvs: EspNvs<esp_idf_svc::nvs::NvsDefault>) -> ! {
     if let Err(error) = apply_joint_positions(&mut pwm, &state.current_deg) {
         log::error!("failed to apply initial pose: {error:?}");
     }
 
     let mut last_telemetry = Instant::now();
     let mut last_discovery = Instant::now();
+    let telemetry_multicast: SocketAddr = TELEMETRY_MULTICAST
+        .parse()
+        .expect("valid telemetry multicast address");
 
     loop {
         let cycle_started = Instant::now();
-        receive_pending_commands(&socket, &mut state);
+        receive_pending_commands(&socket, &mut state, &mut nvs);
 
         let mut positions_to_apply = None;
         let mut telemetry_packet = None;
@@ -115,6 +218,8 @@ async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut stat
         if last_discovery.elapsed() >= DISCOVERY_INTERVAL {
             let hello = b"{\"type\":\"hello\",\"device\":\"arm\",\"name\":\"arm-esp32\",\"control_port\":8888}";
             let _ = socket.send_to(hello, "239.255.42.99:4209");
+            // Match chassis discovery: advertise on the telemetry multicast stream.
+            let _ = socket.send_to(hello, "239.255.42.99:4211");
             last_discovery = Instant::now();
         }
 
@@ -124,12 +229,19 @@ async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut stat
             }
         }
 
-        if let (Some(packet), Some(peer)) = (telemetry_packet, telemetry_peer) {
-            if let Err(error) = send_telemetry(&socket, peer, &packet) {
-                log::warn!("failed to send telemetry to {peer}: {error}");
-            } else {
-                last_telemetry = Instant::now();
+        if let Some(packet) = telemetry_packet {
+            // The control center listens on the telemetry multicast port. Keep
+            // publishing even before the first command so a refreshed page can
+            // immediately display the actual ESP32 pose.
+            if let Err(error) = send_telemetry(&socket, telemetry_multicast, &packet) {
+                log::warn!("failed to multicast arm telemetry: {error}");
             }
+            if let Some(peer) = telemetry_peer {
+                if let Err(error) = send_telemetry(&socket, peer, &packet) {
+                    log::warn!("failed to send telemetry to {peer}: {error}");
+                }
+            }
+            last_telemetry = Instant::now();
         }
 
         let elapsed = cycle_started.elapsed();
@@ -141,8 +253,14 @@ async fn control_loop(mut pwm: pca9685::Pca9685<'_>, socket: UdpSocket, mut stat
 
 fn main() {
     static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-    let executor = EXECUTOR.init(Executor::new());
-    executor.run(|spawner| spawner.spawn(arm_task()).expect("failed to spawn arm task"));
+    std::thread::Builder::new()
+        .name("arm-executor".into())
+        .stack_size(16 * 1024)
+        .spawn(|| {
+            let executor = EXECUTOR.init(Executor::new());
+            executor.run(|spawner| spawner.spawn(arm_task()).expect("failed to spawn arm task"));
+        })
+        .expect("failed to start arm executor thread");
 }
 
 fn apply_joint_positions(

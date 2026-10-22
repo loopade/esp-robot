@@ -27,7 +27,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 
-JOINT_NAMES = [f"joint_{index}" for index in range(1, 7)]
+JOINT_NAMES = [f"joint_{index}" for index in range(1, 6)]
 JOINT_LABELS = ["底座", "大臂", "小臂", "腕部", "爪旋转", "爪夹"]
 
 

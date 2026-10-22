@@ -124,11 +124,9 @@
     <xacro:mesh_visual filename="Parmak_2_X_2.stl" xyz="${hand_to_tool + 0.045} -0.018 -0.0025" material="printed_lime"/>
   </link>
 
-  <joint name="joint_6" type="revolute">
+  <joint name="tool_fixed" type="fixed">
     <parent link="link_5"/>
     <child link="tool_link"/>
     <origin xyz="${hand_to_tool} 0 0" rpy="0 0 0"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="${-joint_limit}" upper="${joint_limit}" effort="1.0" velocity="0.5"/>
   </joint>
 </robot>

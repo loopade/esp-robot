@@ -12,11 +12,13 @@ use esp_idf_hal::units::FromValueType as _;
 const PCA9685_ADDRESS: u8 = 0x40;
 const PWM_FREQUENCY_HZ: f32 = 50.0;
 const CHANNEL_COUNT: u8 = 16;
-const STEP_DELAY: Duration = Duration::from_millis(250);
+const STEP_DELAY: Duration = Duration::from_millis(500);
 const HOLD_DELAY: Duration = Duration::from_secs(1);
+const GROUP_ANGLES_DEG: [f32; 4] = [180.0, 135.0, 90.0, 45.0];
 
-fn set_all_channels(pwm: &mut pca9685::Pca9685<'_>, angle_deg: f32) -> Result<()> {
+fn set_grouped_channels(pwm: &mut pca9685::Pca9685<'_>) -> Result<()> {
     for channel in 0..CHANNEL_COUNT {
+        let angle_deg = GROUP_ANGLES_DEG[(channel / 4) as usize];
         pwm.set_servo_angle(channel, angle_deg, 0.0, 180.0, 500.0, 2500.0)
             .with_context(|| format!("failed to set PCA9685 channel {channel}"))?;
         sleep(STEP_DELAY);
@@ -42,12 +44,16 @@ fn main() -> Result<()> {
         .context("failed to initialize PCA9685 at address 0x40")?;
 
     loop {
-        log::info!("moving channels forward to 180 degrees");
-        set_all_channels(&mut pwm, 180.0)?;
+        log::info!("moving channel groups to 180, 135, 90, and 45 degrees");
+        set_grouped_channels(&mut pwm)?;
         sleep(HOLD_DELAY);
 
         log::info!("moving channels backward to 0 degrees");
-        set_all_channels(&mut pwm, 0.0)?;
+        for channel in 0..CHANNEL_COUNT {
+            pwm.set_servo_angle(channel, 0.0, 0.0, 180.0, 500.0, 2500.0)
+                .with_context(|| format!("failed to set PCA9685 channel {channel}"))?;
+            sleep(STEP_DELAY);
+        }
         sleep(HOLD_DELAY);
     }
 }
