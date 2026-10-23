@@ -1,6 +1,5 @@
 param(
-    [string]$BridgeHost = "127.0.0.1",
-    [int]$Port = 8765,
+    [string]$ControlCenterUrl = "http://127.0.0.1:8080",
     [double]$PollHz = 25.0,
     [double]$SpeedScale = 1.0,
     [double]$PrecisionScale = 0.35
@@ -54,6 +53,8 @@ $ButtonMask = @{
     Y          = 0x8000
 }
 
+$script:ArmHost = $null
+
 $BaseJointRatesDegPerSec = @{
     0 = 26.0
     1 = 18.0
@@ -63,32 +64,20 @@ $BaseJointRatesDegPerSec = @{
     5 = 28.0
 }
 
-$JointNames = @("base", "shoulder", "elbow", "wrist_pitch", "wrist_rotate", "gripper")
-$TargetMinDeg = @(-120.0, -180.0, -180.0, -180.0, -180.0, -180.0)
-$TargetMaxDeg = @(120.0, 180.0, 180.0, 180.0, 180.0, 180.0)
-$JointSoftLimitActive = @($false, $false, $false, $false, $false, $false)
+$JointNames = @("base", "shoulder", "elbow", "wrist_pitch", "wrist_rotate")
+$TargetMinDeg = @(-90.0, -90.0, -90.0, -90.0, -90.0)
+$TargetMaxDeg = @(90.0, 90.0, 90.0, 90.0, 90.0)
+$JointSoftLimitActive = @($false, $false, $false, $false, $false)
+$script:positions = [double[]]@(0, 0, 0, 0, 0)
 
-function Invoke-ArmGet {
-    param([string]$Path)
-
-    Invoke-RestMethod `
-        -Uri ("http://{0}:{1}{2}" -f $BridgeHost, $Port, $Path) `
-        -Method Get `
-        -TimeoutSec 2
+function Get-ControlState {
+    Invoke-RestMethod -Uri "$ControlCenterUrl/api/state" -Method Get -TimeoutSec 2
 }
 
-function Invoke-ArmPost {
-    param(
-        [string]$Path,
-        [hashtable]$Body
-    )
-
-    Invoke-RestMethod `
-        -Uri ("http://{0}:{1}{2}" -f $BridgeHost, $Port, $Path) `
-        -Method Post `
-        -TimeoutSec 2 `
-        -ContentType "application/json" `
-        -Body ($Body | ConvertTo-Json -Compress)
+function Invoke-ControlPost {
+    param([string]$Path, [hashtable]$Body)
+    Invoke-RestMethod -Uri "$ControlCenterUrl$Path" -Method Post -TimeoutSec 2 `
+        -ContentType "application/json" -Body ($Body | ConvertTo-Json -Compress)
 }
 
 function Normalize-Stick {
@@ -234,24 +223,35 @@ function Publish-SpeedScale {
 
     $effectiveSpeed = Get-EffectiveSpeedScale -BaseSpeedScale $BaseSpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
     $roundedSpeed = [Math]::Round($effectiveSpeed, 2)
-    $null = Invoke-ArmPost -Path "/motion_config" -Body @{ speed_scale = $roundedSpeed }
-    Write-Host ("SEND /motion_config -> speed_scale={0}" -f $roundedSpeed)
     return $roundedSpeed
 }
 
 function Get-CurrentJointState {
-    $jointState = Invoke-ArmGet -Path "/joint_state"
-    return [double[]]@($jointState.positions_deg | ForEach-Object { [double]$_ })
+    $state = Get-ControlState
+    $angles = $state.telemetry.current_deg
+    if ($angles -and $angles.Count -ge 5) { return [double[]]@($angles | Select-Object -First 5 | ForEach-Object { [double]$_ }) }
+    return [double[]]@($script:positions)
 }
 
 function Get-TargetState {
-    $payload = Invoke-ArmGet -Path "/target_state"
-    Update-TargetLimitsFromPayload -Payload $payload
-    return @{
-        positions_deg = [double[]]@($payload.positions_deg | ForEach-Object { [double]$_ })
-        target_min_deg = [double[]]@($TargetMinDeg)
-        target_max_deg = [double[]]@($TargetMaxDeg)
+    $state = Get-ControlState
+    $arm = @($state.devices | Where-Object { $_.device -eq 'arm' -or $_.control_port -eq 8888 } | Select-Object -First 1)
+    if (-not $arm -or -not $arm[0].peer) { throw 'No arm discovered by control center yet.' }
+    $script:ArmHost = [string]$arm[0].peer
+    $payload = $state.telemetry
+    if ($payload) {
+        if ($payload.min_angle_deg -and $payload.max_angle_deg) {
+            $script:TargetMinDeg = @($payload.min_angle_deg | ForEach-Object { [double]$_ })
+            $script:TargetMaxDeg = @($payload.max_angle_deg | ForEach-Object { [double]$_ })
+        }
+        if ($payload.target_deg -and $payload.target_deg.Count -ge 5) {
+            $script:positions = [double[]]@($payload.target_deg | Select-Object -First 5 | ForEach-Object { [double]$_ })
+        }
     }
+    if ($script:positions.Count -ne 5) {
+        throw ("Expected 5 arm joint positions, received {0}." -f $script:positions.Count)
+    }
+    return @{ positions_deg = [double[]]@($script:positions); target_min_deg = $TargetMinDeg; target_max_deg = $TargetMaxDeg }
 }
 
 function Test-GoalChanged {
@@ -278,15 +278,21 @@ function Send-Goal {
     param([double[]]$Positions)
 
     Clamp-JointPositions -Positions $Positions
-    $payload = @{
-        positions_deg = @($Positions | ForEach-Object { [Math]::Round($_, 2) })
-    }
-    Write-Host ("SEND /goal -> {0}" -f ($payload.positions_deg -join ", "))
-    $response = Invoke-ArmPost -Path "/goal" -Body $payload
-    if ($response.positions_deg -is [System.Collections.IEnumerable]) {
-        return [double[]]@($response.positions_deg | ForEach-Object { [double]$_ })
-    }
+    $radians = @($Positions | Select-Object -First 5 | ForEach-Object { [Math]::Round($_ * [Math]::PI / 180.0, 5) })
+    $null = Invoke-ControlPost -Path "/api/arm" -Body @{ host = $script:ArmHost; position = $radians; speed_scale = $script:EffectiveSpeedScale }
     return [double[]]@($Positions)
+}
+
+function Send-ChassisDrive {
+    param(
+        [double]$Left,
+        [double]$Right,
+        [bool]$Armed
+    )
+
+    $null = Invoke-ControlPost -Path "/api/control" -Body @{
+        left = [int][Math]::Round($Left); right = [int][Math]::Round($Right); armed = $Armed
+    }
 }
 
 function Write-Mapping {
@@ -302,35 +308,36 @@ function Write-Mapping {
     Write-Host ("Mode: {0}, base speed {1:N1}x, applied speed {2:N2}x" -f $modeLabel, $BaseSpeedScale, $EffectiveSpeedScale)
     Write-Host ("Shared target limits: base [{0}, {1}] deg" -f $TargetMinDeg[0], $TargetMaxDeg[0])
     Write-Host "Mapping:"
-    Write-Host "  D-pad left / right: base target slider step"
-    Write-Host "  Left stick Y: shoulder"
+    Write-Host "  Left stick Y / X: chassis forward / steering (release to stop)"
+    Write-Host "  D-pad left / right: arm base joint"
+    Write-Host "  D-pad up / down: shoulder"
     Write-Host "  Right stick Y: elbow"
     Write-Host "  Right stick X: wrist pitch"
     Write-Host "  LB / RB: wrist rotate"
-    Write-Host "  LT / RT: gripper open / close"
-    Write-Host "  D-pad up / down: base speed"
     Write-Host "  X: toggle precision mode"
     Write-Host "  A: sync current pose into shared target"
     Write-Host "  B: send current target again"
     Write-Host "  Y: reset speed to 1.0x"
 }
 
-try {
-    $targetState = Get-TargetState
-    $positions = [double[]]@($targetState.positions_deg)
-} catch {
-    Write-Warning ("Failed to read shared target state, fallback to joint_state: {0}" -f $_.Exception.Message)
-    $positions = Get-CurrentJointState
-}
-
-Clamp-JointPositions -Positions $positions
-
 $SpeedScale = Clamp-Range -Value $SpeedScale -Minimum 0.2 -Maximum 2.0
 $PrecisionScale = Clamp-Range -Value $PrecisionScale -Minimum 0.2 -Maximum 0.8
 $PrecisionMode = $false
-$EffectiveSpeedScale = Publish-SpeedScale -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
-$InputSpeedFactor = Get-InputSpeedFactor -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
+$ArmAvailable = $false
+$ArmRetryAt = [datetime]::MinValue
+$positions = [double[]]@(0, 0, 0, 0, 0)
 $LastSentPositions = $null
+$EffectiveSpeedScale = Get-EffectiveSpeedScale -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
+try {
+    $targetState = Get-TargetState
+    $positions = [double[]]@($targetState.positions_deg)
+    Clamp-JointPositions -Positions $positions
+    $EffectiveSpeedScale = Publish-SpeedScale -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
+    $ArmAvailable = $true
+} catch {
+    Write-Warning ("Control center unavailable at {0}; chassis/arm controls will retry: {1}" -f $ControlCenterUrl, $_.Exception.Message)
+}
+$InputSpeedFactor = Get-InputSpeedFactor -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
 $LastButtons = 0
 $ControllerConnected = $false
 $LastDpadAdjust = [datetime]::MinValue
@@ -341,10 +348,14 @@ $BaseRepeatIntervalSec = 0.05
 $BaseSliderStepDeg = 1.0
 $BasePressStartedAt = [datetime]::MinValue
 $BaseLastStepAt = [datetime]::MinValue
+$ShoulderStepDirection = 0
+$ShoulderPressStartedAt = [datetime]::MinValue
+$ShoulderLastStepAt = [datetime]::MinValue
 $IntervalMs = [Math]::Max(20, [int](1000.0 / $PollHz))
 
 Write-Mapping -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -EffectiveSpeedScale $EffectiveSpeedScale
 
+try {
 while ($true) {
     $state = New-Object XInputNative+XINPUT_STATE
     $result = [XInputNative]::XInputGetState(0, [ref]$state)
@@ -354,6 +365,12 @@ while ($true) {
             Write-Host "Xbox controller disconnected. Waiting for reconnect..."
             $ControllerConnected = $false
         }
+        try {
+            Send-ChassisDrive -Left 0 -Right 0 -Armed $false
+        } catch {
+            Write-Warning ("Failed to stop chassis after controller disconnect: {0}" -f $_.Exception.Message)
+        }
+        $LastButtons = 0
         Start-Sleep -Milliseconds 250
         continue
     }
@@ -367,6 +384,22 @@ while ($true) {
     $buttons = [int]$gamepad.wButtons
     $dt = $IntervalMs / 1000.0
     $now = Get-Date
+
+    if (-not $ArmAvailable -and $now -ge $ArmRetryAt) {
+        $ArmRetryAt = $now.AddSeconds(2)
+        try {
+            $targetState = Get-TargetState
+            $positions = [double[]]@($targetState.positions_deg)
+            Clamp-JointPositions -Positions $positions
+            $EffectiveSpeedScale = Publish-SpeedScale -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
+            $LastSentPositions = [double[]]@($positions)
+            $LastRemoteTargetSync = $now
+            $ArmAvailable = $true
+            Write-Host "Arm bridge connected; arm control enabled."
+        } catch {
+            Write-Host ("Waiting for discovered arm through control center... {0}" -f $_.Exception.Message)
+        }
+    }
 
     if (Test-ButtonEdge -Buttons $buttons -PreviousButtons $LastButtons -Mask $ButtonMask.X) {
         $PrecisionMode = -not $PrecisionMode
@@ -391,7 +424,7 @@ while ($true) {
         }
     }
 
-    if (Test-ButtonEdge -Buttons $buttons -PreviousButtons $LastButtons -Mask $ButtonMask.A) {
+    if ($ArmAvailable -and (Test-ButtonEdge -Buttons $buttons -PreviousButtons $LastButtons -Mask $ButtonMask.A)) {
         try {
             $positions = Get-CurrentJointState
             Clamp-JointPositions -Positions $positions
@@ -403,7 +436,7 @@ while ($true) {
         }
     }
 
-    if (Test-ButtonEdge -Buttons $buttons -PreviousButtons $LastButtons -Mask $ButtonMask.B) {
+    if ($ArmAvailable -and (Test-ButtonEdge -Buttons $buttons -PreviousButtons $LastButtons -Mask $ButtonMask.B)) {
         try {
             $positions = Send-Goal -Positions $positions
             $LastSentPositions = [double[]]@($positions)
@@ -413,30 +446,63 @@ while ($true) {
         }
     }
 
-    $dpadUpPressed = Test-ButtonPressed -Buttons $buttons -Mask $ButtonMask.DPadUp
-    $dpadDownPressed = Test-ButtonPressed -Buttons $buttons -Mask $ButtonMask.DPadDown
-    if (($dpadUpPressed -or $dpadDownPressed) -and ($now - $LastDpadAdjust).TotalMilliseconds -ge 250) {
-        if ($dpadUpPressed) {
-            $SpeedScale = Clamp-Range -Value ($SpeedScale + 0.1) -Minimum 0.2 -Maximum 2.0
-        } else {
-            $SpeedScale = Clamp-Range -Value ($SpeedScale - 0.1) -Minimum 0.2 -Maximum 2.0
-        }
-
-        try {
-            $EffectiveSpeedScale = Publish-SpeedScale -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
-            $InputSpeedFactor = Get-InputSpeedFactor -BaseSpeedScale $SpeedScale -PrecisionMode $PrecisionMode -PrecisionScale $PrecisionScale
-            Write-Host ("Base speed: {0:N1}x, applied speed: {1:N2}x" -f $SpeedScale, $EffectiveSpeedScale)
-            $LastDpadAdjust = $now
-        } catch {
-            Write-Warning ("Failed to update speed: {0}" -f $_.Exception.Message)
-        }
-    }
-
     $ly = Normalize-Stick -Value $gamepad.sThumbLY
+    $lx = Normalize-Stick -Value $gamepad.sThumbLX
     $rx = Normalize-Stick -Value $gamepad.sThumbRX
     $ry = Normalize-Stick -Value $gamepad.sThumbRY
     $lt = Normalize-Trigger -Value $gamepad.bLeftTrigger
     $rt = Normalize-Trigger -Value $gamepad.bRightTrigger
+
+    # Arcade drive: left stick Y is throttle and X is steering.
+    $throttle = -$ly
+    $turn = $lx
+    $leftDrive = $throttle + $turn
+    $rightDrive = $throttle - $turn
+    $drivePeak = [Math]::Max([Math]::Abs($leftDrive), [Math]::Abs($rightDrive))
+    if ($drivePeak -gt 1.0) {
+        $leftDrive /= $drivePeak
+        $rightDrive /= $drivePeak
+    }
+    try {
+        $driveArmed = ([Math]::Abs($throttle) -ge 0.01 -or [Math]::Abs($turn) -ge 0.01)
+        Send-ChassisDrive -Left ($leftDrive * 1000) -Right ($rightDrive * 1000) -Armed $driveArmed
+    } catch {
+        Write-Warning ("Failed to send chassis command: {0}" -f $_.Exception.Message)
+    }
+
+    if ($ArmAvailable) {
+    $dpadUpPressed = Test-ButtonPressed -Buttons $buttons -Mask $ButtonMask.DPadUp
+    $dpadDownPressed = Test-ButtonPressed -Buttons $buttons -Mask $ButtonMask.DPadDown
+    $hadInput = $false
+    $shoulderDirection = 0
+    if ($dpadUpPressed -and -not $dpadDownPressed) {
+        $shoulderDirection = 1
+    } elseif ($dpadDownPressed -and -not $dpadUpPressed) {
+        $shoulderDirection = -1
+    }
+    if ($shoulderDirection -eq 0) {
+        $ShoulderStepDirection = 0
+    } else {
+        $hadInput = $true
+        $shouldStepShoulder = $false
+        if ($ShoulderStepDirection -ne $shoulderDirection) {
+            $ShoulderStepDirection = $shoulderDirection
+            $ShoulderPressStartedAt = $now
+            $ShoulderLastStepAt = $now
+            $shouldStepShoulder = $true
+        } else {
+            $heldSeconds = ($now - $ShoulderPressStartedAt).TotalSeconds
+            $elapsedSinceStep = ($now - $ShoulderLastStepAt).TotalSeconds
+            if ($heldSeconds -ge $BaseFirstRepeatDelaySec -and $elapsedSinceStep -ge $BaseRepeatIntervalSec) {
+                $ShoulderLastStepAt = $now
+                $shouldStepShoulder = $true
+            }
+        }
+        if ($shouldStepShoulder) {
+            $positions[1] += $shoulderDirection * $BaseSliderStepDeg
+        }
+    }
+
     $dpadLeftPressed = Test-ButtonPressed -Buttons $buttons -Mask $ButtonMask.DPadLeft
     $dpadRightPressed = Test-ButtonPressed -Buttons $buttons -Mask $ButtonMask.DPadRight
     $baseDirection = 0
@@ -446,7 +512,6 @@ while ($true) {
         $baseDirection = 1
     }
 
-    $hadInput = $false
     if ($baseDirection -eq 0) {
         $BaseStepDirection = 0
     } else {
@@ -471,11 +536,10 @@ while ($true) {
         }
     }
 
-    $positions[1] += (-$ly) * $BaseJointRatesDegPerSec[1] * $InputSpeedFactor * $dt
     $positions[2] += (-$ry) * $BaseJointRatesDegPerSec[2] * $InputSpeedFactor * $dt
     $positions[3] += $rx * $BaseJointRatesDegPerSec[3] * $InputSpeedFactor * $dt
 
-    if ([Math]::Abs($ly) -ge 0.001 -or [Math]::Abs($ry) -ge 0.001 -or [Math]::Abs($rx) -ge 0.001) {
+    if ([Math]::Abs($ry) -ge 0.001 -or [Math]::Abs($rx) -ge 0.001) {
         $hadInput = $true
     }
 
@@ -486,11 +550,6 @@ while ($true) {
         $hadInput = $true
     } elseif ($rbPressed -and -not $lbPressed) {
         $positions[4] += $BaseJointRatesDegPerSec[4] * $InputSpeedFactor * $dt
-        $hadInput = $true
-    }
-
-    if ([Math]::Abs($lt) -ge 0.001 -or [Math]::Abs($rt) -ge 0.001) {
-        $positions[5] += ($lt - $rt) * $BaseJointRatesDegPerSec[5] * $InputSpeedFactor * $dt
         $hadInput = $true
     }
 
@@ -515,7 +574,18 @@ while ($true) {
             Write-Warning ("Failed to refresh shared target state: {0}" -f $_.Exception.Message)
         }
     }
+    }
 
     $LastButtons = $buttons
     Start-Sleep -Milliseconds $IntervalMs
+}
+} finally {
+    try {
+        for ($i = 0; $i -lt 10; $i++) {
+            Send-ChassisDrive -Left 0 -Right 0 -Armed $false
+            Start-Sleep -Milliseconds 20
+        }
+    } catch {
+        Write-Warning ("Failed to send chassis stop command: {0}" -f $_.Exception.Message)
+    }
 }

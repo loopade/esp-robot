@@ -8,7 +8,8 @@ body{margin:24px;background:#081018;color:#edf6fa;font:14px Arial}
 .card{background:#111d27;border:1px solid #284050;border-radius:8px;padding:20px;margin:12px auto;max-width:1000px}
 button{padding:16px;margin:4px;background:#182c3b;color:white;border:1px solid #3b586b;border-radius:6px}
 input,select{background:#0c1720;color:white;padding:10px;border:1px solid #284050}
-.joint{display:flex;gap:10px;margin:10px;align-items:center}.joint input{flex:1}
+.joint{display:grid;grid-template-columns:72px minmax(120px,360px) 56px;gap:10px;margin:10px 4px;align-items:center}.joint input{width:100%;margin:0;box-sizing:border-box}.joint input[type=range]{padding:0;background:transparent;border:0}.joint output{text-align:right;font-variant-numeric:tabular-nums}
+.joint-limit{color:#9aaab5}
 .joint-limit{display:grid;grid-template-columns:90px 1fr 1fr;gap:8px;align-items:center;margin:8px 4px}.joint-limit input{width:100%;box-sizing:border-box}
 .arm-options{display:flex;align-items:center;gap:16px;margin:12px 4px}
 #realtime{accent-color:#43c59e}
@@ -56,11 +57,13 @@ function end(){clearInterval(t);act=null;post('/api/stop')}
 function start(k){end();act=k;let f=()=>{let s=+$('speed').value;post('/api/control',{left:vec[k][0]*s,right:vec[k][1]*s,armed:true})};f();t=setInterval(f,100)}
 document.querySelectorAll('[data-a]').forEach(b=>{b.onpointerdown=()=>start(b.dataset.a);b.onpointerup=end});
 $('stop').onclick=end;
+const jointMinimum=Array(5).fill(-90),jointMaximum=Array(5).fill(90);
+function paintJointRange(i){const x=document.querySelectorAll('.joint input[type=range]')[i],low=(jointMinimum[i]+90)/180*100,high=(jointMaximum[i]+90)/180*100;x.style.background=`linear-gradient(to right,#68747d 0%,#68747d ${low}%,#43c59e ${low}%,#43c59e ${high}%,#68747d ${high}%,#68747d 100%)`}
 for(let i=1;i<=5;i++){
   let r=document.createElement('div');r.className='joint';
   r.innerHTML=`关节${i}<input type="range" min="-90" max="90" value="0"><output>0°</output>`;
   let x=r.querySelector('input'),o=r.querySelector('output');
-  x.oninput=()=>{lastArmEdit=Date.now();o.textContent=x.value+'°';scheduleArmSend()};
+  x.oninput=()=>{const v=Math.max(jointMinimum[i-1],Math.min(jointMaximum[i-1],Number(x.value)));x.value=v;lastArmEdit=Date.now();o.textContent=v+'°';scheduleArmSend()};
   $('joints').append(r)
   const limit=document.createElement('div');limit.className='joint-limit';
   limit.innerHTML=`关节${i}<input class="limit-min" type="number" min="-180" max="180" value="-90" aria-label="关节${i}最小角度"><input class="limit-max" type="number" min="-180" max="180" value="90" aria-label="关节${i}最大角度">`;
@@ -100,7 +103,7 @@ function syncJointLimits(minimum,maximum){
   const confirmed=lastLimitsRequest&&minimum.every((v,i)=>Math.abs(Number(v)-lastLimitsRequest.min_deg[i])<0.1)&&maximum.every((v,i)=>Math.abs(Number(v)-lastLimitsRequest.max_deg[i])<0.1);
   if(!limitsEdited||confirmed){
     document.querySelectorAll('.joint-limit').forEach((r,i)=>{r.querySelector('.limit-min').value=Number(minimum[i]).toFixed(1);r.querySelector('.limit-max').value=Number(maximum[i]).toFixed(1)});
-    document.querySelectorAll('.joint input[type=range]').forEach((x,i)=>{x.min=minimum[i];x.max=maximum[i];x.value=Math.max(minimum[i],Math.min(maximum[i],Number(x.value)))});
+    minimum.forEach((v,i)=>{jointMinimum[i]=Number(v);jointMaximum[i]=Number(maximum[i]);const x=document.querySelectorAll('.joint input[type=range]')[i];x.min=-90;x.max=90;x.value=Math.max(-90,Math.min(90,Number(x.value)));paintJointRange(i)});
     if(confirmed){limitsEdited=false;$('limitsStatus').textContent='ESP32 已确认限位';}
   }
 }
@@ -112,7 +115,7 @@ function syncArmFromTelemetry(angles){
   if(Date.now()-lastArmEdit<1500)return;
   if(!Array.isArray(angles)||angles.length!==5)return;
   document.querySelectorAll('.joint input').forEach((x,i)=>{
-    const value=Math.max(-90,Math.min(90,Number(angles[i])));
+    const value=Math.max(jointMinimum[i],Math.min(jointMaximum[i],Number(angles[i])));
     if(!Number.isFinite(value))return;
     x.value=value;
     x.nextElementSibling.textContent=value.toFixed(1)+'°';

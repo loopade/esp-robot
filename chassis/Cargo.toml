@@ -27,6 +27,15 @@ esp-idf-hal = "0.45.2"
 esp-idf-svc = { version = "0.51", features = ["embassy-time-driver", "embassy-sync"] }
 log = "0.4"
 static_cell = "2"
+shared-protocol = { path = "../shared_protocol", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde-json-core = { version = "0.6", optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[features]
+default = ["chassis", "arm"]
+chassis = []
+arm = ["dep:shared-protocol", "dep:serde", "dep:serde-json-core", "dep:serde_json"]
 
 [build-dependencies]
 embuild = "0.33"

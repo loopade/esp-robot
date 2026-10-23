@@ -13,6 +13,7 @@ use static_cell::StaticCell;
 
 use anyhow::{Context, Result};
 use esp_idf_svc::nvs::EspNvs;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use arm::{SharedArmState, ARM_CONFIG, JOINT_COUNT};
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
@@ -36,7 +37,8 @@ async fn arm_run() -> Result<()> {
     log::info!("starting esp32-arm firmware");
 
     let peripherals = Peripherals::take().expect("failed to take ESP32 peripherals");
-    let (_wifi, nvs_partition) = wifi::connect(peripherals.modem).await.expect("wifi setup failed");
+    let nvs_partition = EspDefaultNvsPartition::take()?;
+    let _wifi = wifi::connect(peripherals.modem, nvs_partition.clone()).await?;
 
     let i2c_config = I2cConfig::new().baudrate(100.kHz().into());
     let i2c = I2cDriver::new(

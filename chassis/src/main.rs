@@ -1,3 +1,11 @@
+#[cfg(feature = "arm")]
+mod arm;
+#[cfg(feature = "arm")]
+mod arm_firmware;
+#[cfg(feature = "arm")]
+mod pca9685;
+#[cfg(feature = "arm")]
+mod protocol;
 mod setup;
 mod wifi;
 
@@ -32,7 +40,7 @@ const BOOT_TEST_PHASE_MS: u64 = 5000;
 const LEFT_POLARITY: i32 = 1;
 const RIGHT_POLARITY: i32 = 1;
 
-static WIFI_READY: AtomicBool = AtomicBool::new(false);
+pub(crate) static WIFI_READY: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy)]
 struct Command {
@@ -83,10 +91,17 @@ fn set_signed(
 }
 
 #[embassy_executor::task]
-async fn wifi_task(modem: esp_idf_svc::hal::modem::Modem) {
-    match wifi::connect(modem).await {
+async fn wifi_task(
+    modem: esp_idf_svc::hal::modem::Modem,
+    nvs: esp_idf_svc::nvs::EspDefaultNvsPartition,
+) {
+    let connection = wifi::connect(modem, nvs).await;
+
+    match connection {
         Ok(_wifi) => {
             WIFI_READY.store(true, Ordering::Release);
+            log::info!("shared Wi-Fi connection is ready");
+            // Keep the Wi-Fi service alive independently of device tasks.
             loop {
                 Timer::after(Duration::from_secs(3600)).await;
             }
@@ -94,11 +109,66 @@ async fn wifi_task(modem: esp_idf_svc::hal::modem::Modem) {
         Err(err) => {
             log::error!("Wi-Fi failed: {err:?}");
             WIFI_READY.store(false, Ordering::Release);
-            loop {
-                Timer::after(Duration::from_secs(3600)).await;
-            }
         }
     }
+}
+
+#[cfg(feature = "arm")]
+#[embassy_executor::task]
+async fn arm_task(
+    nvs: esp_idf_svc::nvs::EspDefaultNvsPartition,
+    i2c0: esp_idf_hal::i2c::I2C0,
+    gpio21: esp_idf_hal::gpio::Gpio21,
+    gpio22: esp_idf_hal::gpio::Gpio22,
+) {
+    while !WIFI_READY.load(Ordering::Acquire) {
+        Timer::after(Duration::from_millis(50)).await;
+    }
+    if let Err(err) = arm_firmware::arm_run(nvs, i2c0, gpio21, gpio22).await {
+        log::error!("arm task failed: {err:?}");
+    }
+}
+
+#[cfg(feature = "arm")]
+fn start_arm_worker(
+    nvs: esp_idf_svc::nvs::EspDefaultNvsPartition,
+    i2c0: esp_idf_hal::i2c::I2C0,
+    gpio21: esp_idf_hal::gpio::Gpio21,
+    gpio22: esp_idf_hal::gpio::Gpio22,
+) {
+    std::thread::Builder::new()
+        .name("arm-worker".into())
+        .stack_size(32 * 1024)
+        .spawn(move || {
+            static ARM_EXECUTOR: StaticCell<Executor> = StaticCell::new();
+            ARM_EXECUTOR.init(Executor::new()).run(|spawner| {
+                spawner
+                    .spawn(arm_task(nvs, i2c0, gpio21, gpio22))
+                    .expect("failed to spawn arm task");
+            });
+        })
+        .expect("failed to start arm worker");
+}
+
+fn start_wifi_worker(
+    modem: esp_idf_svc::hal::modem::Modem,
+    nvs: esp_idf_svc::nvs::EspDefaultNvsPartition,
+) {
+    std::thread::Builder::new()
+        .name("wifi-worker".into())
+        .stack_size(32 * 1024)
+        .spawn(move || {
+            static WIFI_EXECUTOR: StaticCell<Executor> = StaticCell::new();
+            WIFI_EXECUTOR.init(Executor::new()).run(|spawner| {
+                spawner
+                    .spawn(wifi_task(
+                        modem,
+                        nvs,
+                    ))
+                    .unwrap();
+            });
+        })
+        .expect("failed to start Wi-Fi worker");
 }
 
 #[embassy_executor::task]
@@ -248,11 +318,15 @@ async fn drive_task(
 fn main() {
     setup::init();
     let peripherals = Peripherals::take().unwrap();
+    let nvs = esp_idf_svc::nvs::EspDefaultNvsPartition::take().unwrap();
+    #[cfg(feature = "arm")]
+    start_arm_worker(nvs.clone(), peripherals.i2c0, peripherals.pins.gpio21, peripherals.pins.gpio22);
+    start_wifi_worker(peripherals.modem, nvs);
     static EXECUTOR: StaticCell<Executor> = StaticCell::new();
     let executor = EXECUTOR.init(Executor::new());
 
     executor.run(|spawner| {
-        spawner.spawn(wifi_task(peripherals.modem)).unwrap();
+        #[cfg(feature = "chassis")]
         spawner
             .spawn(drive_task(
                 peripherals.pins.gpio25,
