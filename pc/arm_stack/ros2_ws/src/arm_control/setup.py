@@ -24,7 +24,6 @@ setup(
     entry_points={
         "console_scripts": [
             "servo_driver = arm_control.servo_driver_node:main",
-            "pose_http_bridge = arm_control.pose_http_bridge_node:main",
         ],
     },
 )

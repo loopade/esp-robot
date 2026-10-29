@@ -1,1 +1,1 @@
-"""Control package for the ESP32 arm platform."""
+"""ESP32 机械臂 ROS 2 控制包。"""

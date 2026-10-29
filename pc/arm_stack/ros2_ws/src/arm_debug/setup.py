@@ -19,10 +19,7 @@ setup(
     license="MIT",
     entry_points={
         "console_scripts": [
-            "joint_state_mirror = arm_debug.joint_state_mirror_node:main",
             "joint_command_cli = arm_debug.joint_command_cli:main",
-            "pose_command_cli = arm_debug.pose_command_cli:main",
-            "pose_debug_panel = arm_debug.pose_debug_panel:main",
         ],
     },
 )

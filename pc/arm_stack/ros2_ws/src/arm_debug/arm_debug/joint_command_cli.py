@@ -1,68 +1,48 @@
+"""用于安全测试的一次性关节角命令发布器。"""
+
+import argparse
 import math
-import sys
-from typing import List
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
+JOINT_NAMES = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5"]
 
-class JointCommandCli(Node):
-    def __init__(self, joint_names: List[str], positions_deg: List[float]) -> None:
+
+class JointCommandPublisher(Node):
+    """发布一条带关节名称的命令，然后退出。"""
+
+    def __init__(self, degrees: list[float]) -> None:
         super().__init__("joint_command_cli")
-        self._publisher = self.create_publisher(JointState, "/arm/goal_joint_states", 10)
-        self._joint_names = joint_names
-        self._positions_deg = positions_deg
-        self._timer = self.create_timer(0.5, self._publish_once)
-        self._published = False
+        self.publisher = self.create_publisher(JointState, "/arm/goal_joint_states", 10)
+        self.degrees = degrees
+        self.sent = False
+        self.timer = self.create_timer(0.2, self._publish_once)
 
     def _publish_once(self) -> None:
-        if self._published:
-            self._timer.cancel()
-            rclpy.shutdown()
+        if self.sent:
             return
-
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = list(self._joint_names)
-        msg.position = [math.radians(value) for value in self._positions_deg]
-        self._publisher.publish(msg)
-        self.get_logger().info(
-            f"Published joint target (deg): {dict(zip(self._joint_names, self._positions_deg))}"
-        )
-        self._published = True
+        # JointState 使用弧度；命令行使用度数更适合人工测试。
+        message = JointState()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.name = list(JOINT_NAMES)
+        message.position = [math.radians(value) for value in self.degrees]
+        self.publisher.publish(message)
+        self.get_logger().info(f"已发布目标角度（度）：{self.degrees}")
+        self.sent = True
+        rclpy.shutdown()
 
 
 def main(args=None) -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Publish one conservative joint target.")
-    parser.add_argument("--joint", required=True, help="Joint name, for example joint_1")
-    parser.add_argument("--deg", required=True, type=float, help="Target angle in degrees")
-    parsed_args = parser.parse_args(args=args)
-
-    joint_names = [f"joint_{index}" for index in range(1, 6)]
-    positions_deg = [0.0] * 5
-
-    if parsed_args.joint not in joint_names:
-        raise SystemExit(f"Unknown joint: {parsed_args.joint}")
-
-    positions_deg[joint_names.index(parsed_args.joint)] = parsed_args.deg
-
-    rclpy.init()
-    node = JointCommandCli(joint_names, positions_deg)
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if hasattr(node, "context") and node.context.ok():
-            node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
-
-    return 0
+    parser = argparse.ArgumentParser(description="发布五个机械臂关节角度，单位为度。")
+    parser.add_argument("degrees", nargs=5, type=float, metavar="DEG")
+    parsed, ros_args = parser.parse_known_args(args)
+    rclpy.init(args=ros_args)
+    node = JointCommandPublisher(parsed.degrees)
+    rclpy.spin(node)
+    node.destroy_node()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

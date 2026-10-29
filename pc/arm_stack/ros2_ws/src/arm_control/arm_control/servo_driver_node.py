@@ -1,3 +1,9 @@
+"""机械臂仿真后端和 ESP32 UDP 后端的 ROS 2 驱动节点。
+
+ROS 接口统一使用弧度制的 sensor_msgs/JointState，只有 UDP 适配器处理
+ESP32 使用的 JSON 协议和角度单位转换。
+"""
+
 import json
 import math
 import socket
@@ -15,6 +21,7 @@ from arm_control.motion_profile import PrecisionMotionProfile
 
 
 def _as_float_list(value: List[float]) -> List[float]:
+    # ROS 参数可能返回整数或浮点数，统一转换后再使用。
     return [float(item) for item in value]
 
 
@@ -84,6 +91,7 @@ class Esp32UdpBridge:
         self._socket.close()
 
     def send_goal(self, positions_deg: List[float], speed_scale: float) -> None:
+        # 固件要求角度使用度数，并且消息类型必须是 joint_goal。
         self._send(
             {
                 "type": "joint_goal",
@@ -96,6 +104,7 @@ class Esp32UdpBridge:
         self._send({"type": "speed_scale", "value": round(speed_scale, 4)})
 
     def poll_joint_state(self) -> Optional[List[float]]:
+        # 清空接收缓存，只保留最新状态，避免旧姿态覆盖新姿态。
         latest_positions: Optional[List[float]] = None
         while True:
             try:
@@ -167,6 +176,7 @@ class ServoDriverNode(Node):
         self.declare_parameter("esp32_udp_bind_address", "0.0.0.0")
         self.declare_parameter("esp32_udp_bind_port", 8889)
 
+        # 在接收控制命令前，先读取并缓存所有安全相关参数。
         self.config = self._load_config()
         self.backend_mode = str(self.get_parameter("backend_mode").value).strip().lower()
         if self.backend_mode not in {"local", "esp32_udp"}:
@@ -198,6 +208,7 @@ class ServoDriverNode(Node):
             self.get_parameter("settle_cycles").get_parameter_value().integer_value
         )
 
+        # 仿真从设定的回零姿态开始；真实硬件由遥测状态更新。
         self.current_deg = list(self.config.home_position_deg)
         self._trajectory: deque[List[float]] = deque()
         self._settle_remaining = 0
@@ -270,6 +281,7 @@ class ServoDriverNode(Node):
             return SimServoBackend(self.get_logger())
 
     def _on_goal(self, msg: JointState) -> None:
+        # 将弧度转换为带名称的度数目标，拒绝错误输入并执行软限位。
         target_deg = self._extract_goal_deg(msg)
         if target_deg is None:
             return
@@ -320,6 +332,7 @@ class ServoDriverNode(Node):
         ]
 
     def _on_timer(self) -> None:
+        # 硬件模式读取反馈；仿真模式执行规划好的轨迹。
         if self.backend_mode == "esp32_udp":
             assert self.esp32_bridge is not None
             current_deg = self.esp32_bridge.poll_joint_state()
@@ -352,6 +365,7 @@ class ServoDriverNode(Node):
             self._settle_remaining -= 1
 
     def _apply_positions(self, joint_positions_deg: List[float]) -> None:
+        # 将机器人关节角转换为舵机角，并应用方向和零点偏移校准。
         for index, joint_name in enumerate(self.config.joint_names):
             _ = joint_name
             signed_joint_deg = (
@@ -375,6 +389,7 @@ class ServoDriverNode(Node):
         self._publish_joint_state(joint_positions_deg)
 
     def _publish_joint_state(self, joint_positions_deg: List[float]) -> None:
+        # robot_state_publisher 要求 JointState 使用弧度。
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = list(self.config.joint_names)
@@ -382,6 +397,7 @@ class ServoDriverNode(Node):
         self.joint_state_pub.publish(msg)
 
     def _publish_target_state(self, joint_positions_deg: List[float]) -> None:
+        # 分开发布目标状态和实际状态，便于数字孪生比较误差。
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = list(self.config.joint_names)
@@ -415,6 +431,7 @@ class ServoDriverNode(Node):
         return min(max(value, minimum), maximum)
 
     def destroy_node(self):
+        # 退出节点时关闭 UDP 套接字，避免 Ctrl+C 后遗留资源。
         if self.esp32_bridge is not None:
             self.esp32_bridge.close()
         return super().destroy_node()

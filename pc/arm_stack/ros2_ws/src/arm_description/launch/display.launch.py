@@ -5,6 +5,7 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    # 这里只发布模型；关节状态由 servo_driver 或测试命令发布。
     model_file = PathJoinSubstitution(
         [FindPackageShare("arm_description"), "urdf", "arm_platform.urdf.xacro"]
     )
@@ -18,12 +19,6 @@ def generate_launch_description():
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
-                output="screen",
-                parameters=[{"robot_description": robot_description}],
-            ),
-            Node(
-                package="joint_state_publisher_gui",
-                executable="joint_state_publisher_gui",
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
             ),

@@ -14,7 +14,6 @@
   <exec_depend>arm_control</exec_depend>
   <depend>python_qt_binding</depend>
   <depend>xacro</depend>
-  <depend>joint_state_publisher_gui</depend>
   <depend>robot_state_publisher</depend>
   <depend>rviz2</depend>
 
