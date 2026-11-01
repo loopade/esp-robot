@@ -24,6 +24,43 @@ ESP32 舵机状态 <- UDP <- ROS 2 控制节点 <- 目标关节角
 
 ## 0. 环境准备
 
+## 0.1 Fusion 模型包路径约定
+
+`arm_description` 不存放在主项目 Git 中。Fusion 360 导出器的保存目录必须选择：
+
+```text
+D:\OneDrive\Design\3D\机械臂\ros2
+```
+
+导出器会在该目录下生成：
+
+```text
+D:\OneDrive\Design\3D\机械臂\ros2\arm_description
+```
+
+WSL 工作区中的以下路径是指向上述目录的 Windows Junction：
+
+```text
+A:\Develop\esp-robot\pc\arm_stack\ros2_ws\src\arm_description
+```
+
+因此 ROS 2 仍然从工作区路径发现并构建 `arm_description`，但 Fusion 导出的 STL、Xacro、RViz 配置和启动文件不会进入主项目 Git。重新导出模型时直接覆盖 D 盘目录，不要在主项目下新建第二份 `arm_description`。
+
+检查 Junction：
+
+```powershell
+Get-Item A:\Develop\esp-robot\pc\arm_stack\ros2_ws\src\arm_description
+```
+
+确认输出的 `Target` 为 `D:\OneDrive\Design\3D\机械臂\ros2\arm_description` 后，再在 WSL 中构建：
+
+```bash
+cd /mnt/a/Develop/esp-robot/pc/arm_stack/ros2_ws
+source /opt/ros/lyrical/setup.bash
+colcon build --symlink-install --packages-select arm_description
+source install/setup.bash
+```
+
 建议在 WSL2 的 Linux 文件系统中工作，而不是直接在 `/mnt/a` 下编译：
 
 ```bash
@@ -120,6 +157,16 @@ ros2 topic pub --once /arm/goal_joint_states sensor_msgs/msg/JointState \
 验收：RViz 模型随目标关节角运动，`/joint_states` 持续发布，关节名称与 Xacro 完全一致。
 
 ## 4. 校准模型和实体关节
+
+### 已确认的 Fusion 机械关系
+
+以下关系已经根据当前 Fusion 360 装配确认，后续 ROS 关节映射必须以此为依据：
+
+- `旋转 2`：MG996R 输出轴与 J1 主动齿轮之间的转动关节，是底座驱动链的主动输入。
+- `旋转 10`：J1 中心轴与从动齿轮之间的转动关节，由 `旋转 2` 啮合带动，不是独立舵机输入；传动方向相反，角度比例为 `1:1`。
+- `旋转 35`：大臂抬起关节。
+
+`旋转 2` 到 `旋转 10` 应在 URDF/Xacro 中表达为反向 `1:1` 的齿轮联动，并在执行器映射中只把 `旋转 2` 作为独立控制输入。
 
 在接电机之前，固定一个实体机械臂零位，并记录照片或角度。逐关节只测试 ±10°：
 

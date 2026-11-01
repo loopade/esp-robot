@@ -12,6 +12,10 @@ target/
 **/ros2_ws/install/
 **/ros2_ws/log/
 
+# Fusion 360 导出的 ROS 2 模型包位于 OneDrive，通过 Junction 接入工作区。
+# 该目录由 Fusion 重新导出，不纳入主项目 Git。
+pc/arm_stack/ros2_ws/src/arm_description/
+
 # Local runtime/configuration files
 **/servo_driver.yaml
 **/servo_driver_esp32.yaml
