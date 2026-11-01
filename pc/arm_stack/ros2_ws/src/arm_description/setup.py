@@ -1,25 +1,31 @@
+from setuptools import setup
+import os
 from glob import glob
 
-from setuptools import setup
-
-package_name = "arm_description"
+package_name = 'arm_description'
 
 setup(
     name=package_name,
-    version="0.1.0",
+    version='0.0.0',
     packages=[package_name],
     data_files=[
-        ("share/ament_index/resource_index/packages", ["resource/arm_description"]),
-        ("share/arm_description", ["package.xml"]),
-        ("share/arm_description/launch", ["launch/display.launch.py"]),
-        ("share/arm_description/urdf", ["urdf/arm_platform.urdf.xacro"]),
-        ("share/arm_description/rviz", ["rviz/arm_debug.rviz"]),
-        ("share/arm_description/meshes", glob("meshes/*.stl")),
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name]),
+        ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'urdf'), glob('urdf/*')),
+        (os.path.join('share', package_name, 'meshes'), glob('meshes/*')),
+        (os.path.join('share', package_name, 'config'), glob('config/*'))
     ],
-    install_requires=["setuptools"],
+    install_requires=['setuptools'],
     zip_safe=True,
-    maintainer="arm-stack",
-    maintainer_email="dev@example.com",
-    description="Robot description resources for the ESP32 arm platform.",
-    license="MIT",
+    maintainer='author',
+    maintainer_email='todo@todo.com',
+    description='The ' + package_name + ' package',
+    license='TODO: License declaration',
+    tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+        ],
+    },
 )
